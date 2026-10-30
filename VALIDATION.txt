@@ -34,3 +34,52 @@ No broken requirements found.
 CLI web smoke: HTTP 200 at http://127.0.0.1:8765; process stopped afterwards.
 Generated fixtures, PDFs, preview, DXF and wheel are local in ignored artifacts/.
 No real-photo accuracy validation was performed.
+
+Free-placement validation (2026-10-30)
+$ .venv/bin/pytest -q
+21 passed in 11.80s
+
+Random marker poses; ground truth 400 x 600 mm:
+cards seed tilt  width_mm  height_mm residual_mm
+4     3     0    400.2439  600.3436  0.0153
+4     3    10    400.2268  600.4080  0.0155
+4     3    20    400.3483  600.5071  0.0264
+4     3    35    400.4480  600.5144  0.0531
+6    17     0    400.1676  600.3173  0.0178
+6    17    10    400.2423  600.1934  0.0179
+6    17    20    400.3484  600.2102  0.0143
+6    17    35    400.4518  600.1679  0.0350
+Maximum dimension error: 0.5144 mm (< 1 mm).
+
+$ .venv/bin/easyon-scan sheet --out markers-free-a4.pdf
+Saved markers-free-a4.pdf. Print at 100%; cut and place as instructed.
+PDF visually checked after rendering with pdftoppm; cut lines, IDs, 100 mm
+ruler and EN/PT instructions present. A4/A3 physical page sizes tested.
+$ .venv/bin/easyon-scan sheet --id 7 --out artifacts/marker-7.pdf
+Saved artifacts/marker-7.pdf. Print at 100%; cut and place as instructed.
+
+$ .venv/bin/easyon-scan measure artifacts/free-35.png --out artifacts/free.dxf --preview artifacts/free-preview.png
+{
+  "area_mm2": 240245.26217793318,
+  "width_mm": 400.4517517089844,
+  "height_mm": 600.1679077148438,
+  "residual_px": 0.09838453515483424,
+  "residual_mm": 0.034954186637476785
+}
+Fixture: generate_free(tilt=35, seed=17, count=6).
+
+$ .venv/bin/easyon-scan measure artifacts/synthetic.png --layout fixed --out artifacts/fixed.dxf
+{
+  "area_mm2": 240000.05757400056,
+  "width_mm": 400.1088890660278,
+  "height_mm": 600.1074559763958,
+  "residual_px": 0.165898019204278,
+  "residual_mm": 0.06266859178375976
+}
+
+$ .venv/bin/easyon-scan web
+CLI web smoke: HTTP 200; free-placement instructions verified; process stopped.
+Tests also cover metric residual >1 mm, CLI warning, fixed CLI, exact-corner
+calibration, single-card printing, PDF sizes, upload/download and DXF units.
+$ git diff --check
+Passed.

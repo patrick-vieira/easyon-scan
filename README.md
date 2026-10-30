@@ -9,56 +9,56 @@ in millimetres. Python 3.11+, Apache-2.0. Early experimental release.
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .
-easyon-scan sheet --size a4 --out markers.pdf
-# A3 is also supported: --size a3
+easyon-scan sheet --out markers-free-a4.pdf
+# Optional: one card per A4 sheet, using different IDs:
+# easyon-scan sheet --id 0 --out marker-0.pdf
 ```
 
-Print the PDF at **100% / actual size**, with all fit-to-page options disabled.
-Check the printed 100 mm ruler with a physical ruler, in both printer axes;
-check that each black marker measures 90 × 90 mm. Keep white borders around
-all markers. The printed sheet is a set of **cut-out cards**, not the final
-measurement layout: four 90 mm markers on an intact A4 leave too little room
-for a useful pattern. A3 uses the same cards and assembly dimensions.
+Or download [markers-free-a4.pdf](markers-free-a4.pdf). Print at **100% / actual
+size**, without fitting to the page. Check the 100 mm ruler and each black
+90 × 90 mm square with a physical ruler. Cut the four cards along the cut lines,
+keeping their white borders.
 
-Cut out the cards leaving at least 5 mm white borders. Tape them flat to a dark,
-matte table, all TOP arrows pointing up. Use a tape measure and square to place
-the **top-left corner of each black square** at these coordinates:
+Spread the cards **anywhere around the pattern** on a dark, matte table, with any
+rotation. No rectangle, tape measure or prescribed spacing is needed. Use four
+or more distinct ArUco DICT_4X4_50 IDs (0–49), all with 90 mm black squares.
+Keep the cards and light paper flat in the **same plane**, with a gap between
+cards and pattern. The complete pattern must fit inside the markers' convex hull.
 
-| ID | x (mm) | y (mm) | Position |
-|---|---:|---:|---|
-| 0 | 0 | 0 | top left |
-| 1 | 690 | 0 | top right |
-| 2 | 690 | 890 | bottom right |
-| 3 | 0 | 890 | bottom left |
-
-The outer black-square envelope is **780 × 980 mm**. Its diagonals should both
-measure approximately 1252.5 mm. The empty central working area is 600 × 800 mm
-(x=90…690, y=90…890). Layout and marker dimensions are fixed in this release;
-arbitrarily placing the cards gives incorrect measurements. The assembly takes
-additional time the first time you use it.
-
-Place one light paper pattern flat in the middle, leaving at least 3 mm clearance
-from the central area's edges. Photograph all four markers and the entire pattern.
-Use even lighting, avoid shadows, glare, ultrawide lenses and steep angles. Transfer
-the original photograph to your computer (not a screenshot).
+Photograph from above with the whole pattern and all markers visible. Use even
+lighting and the original photograph; avoid glare, shadows and ultrawide lenses.
 
 ```sh
-easyon-scan measure photo.jpg --out pattern.dxf --preview preview.png
-# Or use a local upload form:
 easyon-scan web
-# Open http://127.0.0.1:8765
+# Open http://127.0.0.1:8765 and upload the photograph.
+# Or:
+easyon-scan measure photo.jpg --out pattern.dxf --preview preview.png
 ```
 
-The web page shows the rectified photograph, red outline, area and width × height,
-then offers a DXF download. Uploads, previews and DXFs are processed in request
-memory, without a server-side file store or session cache. The result is embedded
-in the response for the browser to download. Limits: 25 MB and 40 megapixels.
-The Flask server binds only to localhost and is intended for local use.
+The page shows the outline, dimensions, area and marker residual in **mm**, with
+a warning above 1 mm, and offers a DXF download. Uploads and exports stay in
+request memory. Limits: 25 MB / 40 megapixels; the server binds to localhost.
 
-Width and height are the axis-aligned extents relative to the assembled layout,
-not the minimum rotated bounding box. Area is in mm². DXF contains one closed
-LWPOLYLINE on layer OUTLINE, `$INSUNITS=4`; its origin is lower left and y points
-up. The API's contour uses table coordinates, with y pointing down.
+In free mode width and height are the shorter and longer sides of the minimum
+rotated bounding rectangle. Coordinates use the lowest detected marker ID as
+the reference frame (origin at its first corner, y down). DXF uses millimetres,
+a closed LWPOLYLINE on OUTLINE, and y up with its origin at the outline's lower
+left. No marker pose is prescribed.
+
+### Optional fixed layout
+
+Use `--layout fixed` with `sheet`, `measure` or `web` for the original layout.
+All markers must point up, with black-square top-left corners at:
+
+| ID | x (mm) | y (mm) |
+|---|---:|---:|
+| 0 | 0 | 0 |
+| 1 | 690 | 0 |
+| 2 | 690 | 890 |
+| 3 | 0 | 890 |
+
+The envelope is 780 × 980 mm. Keep the pattern within x=90…690, y=90…890,
+with 3 mm clearance. Fixed-mode width and height follow the layout axes.
 
 ## Synthetic smoke test
 
@@ -71,7 +71,9 @@ easyon-scan measure synthetic.png --out pattern.dxf --preview preview.png
 pytest -q
 ```
 
-Tests exercise perspective and JPEG input, require width/height error below 1 mm
+Tests exercise random free marker poses with 4 and 6 cards at camera tilts
+0°, 10°, 20° and 35°, fixed layout, perspective and JPEG input, requiring
+width/height error below 1 mm
 against a known 400 × 600 mm rectangle, reread the DXF with ezdxf, check PDF page
 sizes, test the upload/download flow, and reject missing references/paper.
 
@@ -83,11 +85,17 @@ real-photo guarantee). This smaller package has a separate synthetic smoke test;
 it does not reproduce that full benchmark. **Real phone photos are not yet
 validated.** Successful marker detection does not certify the resulting scale.
 
-The scanner detects real-image ArUco DICT_4X4_50 IDs 0–3, estimates a planar
-homography from all 16 corners, segments the largest light-paper contour on a
-darker table, refines the intensity edge in the original photo, and maps it to mm.
-Rectification is used for preview only. Marker reprojection residual above 3 px
-fails; above 1 px produces a warning. Coherent print scaling errors can still pass.
+The scanner detects ArUco DICT_4X4_50 markers. Free calibration starts from one
+90 mm square, maps the other corners into that plane, and initializes each
+unknown pose with a rigid 2D fit. Five damped Gauss–Newton iterations jointly
+refine the image-to-plane homography and all other marker rotations/translations
+against every corner. The first marker fixes the arbitrary coordinate frame.
+The reported residual is RMS Euclidean corner error in mm; above 1 mm produces
+a warning. Coherent printer scale errors can still pass this check.
+
+The largest light contour inside the marker hull is segmented after excluding
+marker cards. Its intensity edge is refined in the source photo before mapping
+to mm. Rectification is used for preview only.
 
 Lens distortion is not corrected. Printer scaling, placement error, paper curl,
 shadows and poor contrast can dominate the error. Use the same plane for paper
@@ -106,7 +114,7 @@ applies to this project's code, not all third-party binary components.
 
 - Validate against measured real phone photographs and publish error distributions.
 - Add camera calibration / lens distortion correction and stronger quality checks.
-- Support custom, persisted layouts and larger patterns.
+- Support custom marker sizes and persisted layouts.
 - Detect notches and grain lines; add AAMA/ASTM export.
 - Add multi-photo stitching and broader lighting/contrast fixtures.
 

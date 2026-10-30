@@ -1,11 +1,11 @@
 """Detect references and measure the light paper outline in source-image coordinates."""
 from dataclasses import dataclass
-from pathlib import Path
 import cv2 as cv
 import numpy as np
 from PIL import Image, ImageOps
 from shapely.geometry import Polygon
 from .markers import dictionary, corners_mm, ROI, WIDTH_MM, HEIGHT_MM
+from .calibration import free_homography, project
 
 class ScanError(ValueError):
     """The photograph cannot be measured reliably."""
@@ -17,11 +17,12 @@ class Measurement:
     width_mm: float
     height_mm: float
     residual_px: float
+    residual_mm: float
     preview: np.ndarray
 
     def summary(self):
         return {k: getattr(self, k) for k in
-                ("area_mm2", "width_mm", "height_mm", "residual_px")}
+                ("area_mm2", "width_mm", "height_mm", "residual_px", "residual_mm")}
 
 
 def load_photo(source):
@@ -48,7 +49,9 @@ def cruzamento(channel,points,level):
     return p
 
 
-def measure(source):
+def measure(source, layout="free"):
+    if layout not in ("free", "fixed"):
+        raise ValueError("Layout must be free or fixed")
     image = load_photo(source) if not isinstance(source, np.ndarray) else source
     if image is None or image.ndim != 3 or image.shape[2] != 3:
         raise ScanError("Expected a colour photograph")
@@ -57,30 +60,43 @@ def measure(source):
     params.cornerRefinementMethod = cv.aruco.CORNER_REFINE_APRILTAG
     corners, ids, _ = cv.aruco.ArucoDetector(dictionary(), params).detectMarkers(gray)
     found = {} if ids is None else {int(i): c.reshape(4, 2) for i, c in zip(ids.ravel(), corners)}
-    if not all(i in found for i in range(4)):
-        raise ScanError("Need all four ArUco IDs 0, 1, 2, 3, fully visible")
-    if any(list(ids.ravel()).count(i) != 1 for i in range(4)):
+    if len(found) < 4 or (layout == "fixed" and not all(i in found for i in range(4))):
+        raise ScanError("Need at least four ArUco markers, fully visible (fixed: IDs 0–3)")
+    if len(found) != len(ids):
         raise ScanError("Duplicate marker IDs")
-    photo = np.concatenate([found[i] for i in range(4)]).astype(np.float32)
+    selected = sorted(found) if layout == "free" else list(range(4))
+    photo = np.concatenate([found[i] for i in selected]).astype(np.float32)
     photo = cv.cornerSubPix(gray, photo.reshape(-1, 1, 2), (5, 5), (-1, -1),
                             (cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 40, .001)).reshape(-1, 2).astype(float)
-    world = np.concatenate([corners_mm(i) for i in range(4)])
-    homography, _ = cv.findHomography(world, photo, 0)
-    if homography is None or not np.isfinite(homography).all() or np.linalg.cond(homography) > 1e9:
+    if layout == "free":
+        inverse, world, residual_mm = free_homography(photo)
+        homography = np.linalg.inv(inverse)
+    else:
+        world = np.concatenate([corners_mm(i) for i in selected])
+        homography, _ = cv.findHomography(world, photo, 0)
+        if homography is None:
+            raise ScanError("Degenerate marker layout")
+        inverse = np.linalg.inv(homography)
+        residual_mm = float(np.sqrt(np.mean(np.sum((project(photo, inverse)-world)**2, axis=1))))
+    if not np.isfinite(homography).all() or np.linalg.cond(homography) > 1e9:
         raise ScanError("Degenerate marker layout")
-    residual = float(np.sqrt(np.mean(np.sum((cv.perspectiveTransform(world[None], homography)[0] - photo)**2, axis=1))))
-    if residual > 3:
-        raise ScanError(f"Inconsistent marker layout ({residual:.2f} px residual)")
-    inverse = np.linalg.inv(homography)
+    residual = float(np.sqrt(np.mean(np.sum((project(world, homography)-photo)**2, axis=1))))
     x0, y0, x1, y1 = ROI
-    roi = cv.perspectiveTransform(np.array([[[x0,y0],[x1,y0],[x1,y1],[x0,y1]]], float), homography)[0]
-    if np.any(roi < 0) or np.any(roi[:, 0] >= gray.shape[1]) or np.any(roi[:, 1] >= gray.shape[0]):
-        raise ScanError("Central working area is outside the photo")
+    if layout == "fixed":
+        roi = project([[x0,y0],[x1,y0],[x1,y1],[x0,y1]], homography)
+        if np.any(roi < 0) or np.any(roi[:, 0] >= gray.shape[1]) or np.any(roi[:, 1] >= gray.shape[0]):
+            raise ScanError("Central working area is outside the photo")
+    else:
+        roi = cv.convexHull(photo.astype(np.float32)).reshape(-1, 2)
     a = np.maximum(np.floor(roi.min(0)-3).astype(int), 0)
     b = np.minimum(np.ceil(roi.max(0)+3).astype(int), [gray.shape[1]-1, gray.shape[0]-1])
     crop = gray[a[1]:b[1]+1, a[0]:b[0]+1]
     valid = np.zeros(crop.shape, np.uint8)
     cv.fillConvexPoly(valid, np.rint(roi-a).astype(np.int32), 255)
+    if layout == "free":
+        for marker in photo.reshape(-1, 4, 2):
+            expanded = marker.mean(0) + (marker-marker.mean(0))*1.25
+            cv.fillConvexPoly(valid, np.rint(expanded-a).astype(np.int32), 0)
     values = crop[valid > 0]
     otsu, _ = cv.threshold(values, 0, 255, cv.THRESH_BINARY+cv.THRESH_OTSU)
     dark, light = values[values <= otsu], values[values > otsu]
@@ -91,17 +107,30 @@ def measure(source):
     contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
     if not contours:
         raise ScanError("No paper outline found")
-    pixels = max(contours, key=cv.contourArea).reshape(-1,2).astype(float)+a
+    outline = max(contours, key=cv.contourArea).reshape(-1, 2)
+    if layout == "free":
+        clearance = cv.distanceTransform(valid, cv.DIST_L2, 3)
+        if np.min(clearance[outline[:, 1], outline[:, 0]]) < 2:
+            raise ScanError("Paper touches marker cards or working area edge; leave a gap")
+    pixels = outline.astype(float)+a
     pixels = cruzamento(gray.astype(np.float32), pixels, threshold)
     mm = cv.perspectiveTransform(pixels[None], inverse)[0]
     if len(mm) < 20 or not np.isfinite(mm).all():
         raise ScanError("Invalid outline")
-    if min((mm[:,0]-x0).min(), (x1-mm[:,0]).min(), (mm[:,1]-y0).min(), (y1-mm[:,1]).min()) < 3:
+    if layout == "fixed" and min((mm[:,0]-x0).min(), (x1-mm[:,0]).min(), (mm[:,1]-y0).min(), (y1-mm[:,1]).min()) < 3:
         raise ScanError("Paper touches working area edge; leave at least 3 mm clearance")
     polygon = Polygon(mm)
     if not polygon.is_valid or polygon.area < 100:
         raise ScanError("Invalid or too small paper outline")
-    preview = cv.warpPerspective(image, inverse, (WIDTH_MM, HEIGHT_MM))
-    cv.polylines(preview, [np.rint(mm).astype(np.int32)], True, (0,0,255), 2)
-    width, height = np.ptp(mm, axis=0)
-    return Measurement(mm, float(polygon.area), float(width), float(height), residual, preview)
+    if layout == "free":
+        origin = mm.min(0)-20
+        extent = np.ceil(mm.max(0)-origin+20).astype(int)
+        shift = np.array([[1.,0.,-origin[0]],[0.,1.,-origin[1]],[0.,0.,1.]])
+        preview = cv.warpPerspective(image, shift @ inverse, tuple(extent))
+        cv.polylines(preview, [np.rint(mm-origin).astype(np.int32)], True, (0,0,255), 2)
+        width, height = sorted(cv.minAreaRect(mm.astype(np.float32))[1])
+    else:
+        preview = cv.warpPerspective(image, inverse, (WIDTH_MM, HEIGHT_MM))
+        cv.polylines(preview, [np.rint(mm).astype(np.int32)], True, (0,0,255), 2)
+        width, height = np.ptp(mm, axis=0)
+    return Measurement(mm, float(polygon.area), float(width), float(height), residual, residual_mm, preview)

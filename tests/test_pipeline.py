@@ -9,7 +9,7 @@ import ezdxf
 import numpy as np
 import pytest
 from easyon_scan.scan import measure, ScanError
-from easyon_scan.synthetic import generate
+from easyon_scan.synthetic import generate, generate_free
 from easyon_scan.dxf import export_dxf
 from easyon_scan.markers import sheet
 from easyon_scan.web import create_app
@@ -23,7 +23,7 @@ def scene():
 @pytest.mark.parametrize("perspective", [False, True])
 def test_end_to_end(tmp_path, perspective):
     image, truth = generate(tmp_path / "photo.jpg", perspective=perspective)
-    result = measure(tmp_path / "photo.jpg")
+    result = measure(tmp_path / "photo.jpg", layout="fixed")
     assert abs(result.width_mm - truth["width_mm"]) < 1
     assert abs(result.height_mm - truth["height_mm"]) < 1
     assert abs(result.area_mm2 / truth["area_mm2"] - 1) < .005
@@ -80,11 +80,65 @@ def test_web(scene):
     assert b"Download DXF" not in client.get("/").data
 
 
-def test_cli(tmp_path):
+@pytest.mark.parametrize("layout", ["free", "fixed"])
+def test_cli(tmp_path, layout):
     generate(tmp_path / "photo.png")
     run = subprocess.run([sys.executable, "-c", "from easyon_scan.cli import main; main()", "measure",
-        str(tmp_path / "photo.png"), "--out", str(tmp_path / "out.dxf"),
+        str(tmp_path / "photo.png"), "--layout", layout, "--out", str(tmp_path / "out.dxf"),
         "--preview", str(tmp_path / "preview.png")], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     assert (tmp_path / "out.dxf").exists()
     assert cv.imread(str(tmp_path / "preview.png")) is not None
+
+
+@pytest.mark.parametrize("tilt", [0, 10, 20, 35])
+@pytest.mark.parametrize("seed,count", [(3,4), (17,6)])
+def test_free_random_poses(tilt, seed, count):
+    image, truth = generate_free(tilt=tilt, seed=seed, count=count)
+    result = measure(image)
+    assert abs(result.width_mm-truth["width_mm"]) < 1
+    assert abs(result.height_mm-truth["height_mm"]) < 1
+    assert result.residual_mm < 1
+
+
+def test_free_metric_corners():
+    from easyon_scan.calibration import free_homography, project, SQUARE
+    rng = np.random.default_rng(12)
+    world = []
+    for _ in range(7):
+        theta = rng.uniform(-3,3)
+        c,s = np.cos(theta),np.sin(theta)
+        world.append(SQUARE @ np.array([[c,s],[-s,c]]) + rng.uniform(-500,500,2))
+    h = np.array([[2., .3, 1000.], [.1, 2.1, 900.], [.0003,.0002,1.]])
+    photo = project(np.concatenate(world),h)
+    inverse, _, residual = free_homography(photo)
+    assert residual < .0001
+    mapped = project(project(SQUARE,h),inverse)
+    np.testing.assert_allclose(np.linalg.norm(mapped[1]-mapped[0]),90,atol=.001)
+
+
+def test_metric_residual_detects_inconsistent_square():
+    from easyon_scan.calibration import free_homography, SQUARE
+    photo = np.concatenate([SQUARE+[x,y] for x,y in [(0,0),(700,0),(700,900),(0,900)]])
+    photo[8:12] = (photo[8:12]-[700,900])*1.12+[700,900]
+    _, _, residual_mm = free_homography(photo)
+    assert residual_mm > 1
+
+
+def test_single_card_sheet(tmp_path):
+    path = tmp_path / "single.pdf"
+    sheet(path, marker_id=17)
+    assert path.read_bytes().startswith(b"%PDF")
+    with pytest.raises(ValueError):
+        sheet(path, marker_id=50)
+
+
+def test_cli_warns_in_mm(scene, tmp_path, monkeypatch, capsys):
+    from easyon_scan import cli
+    result = measure(scene[0])
+    result.residual_mm = 1.1
+    result.residual_px = .1
+    monkeypatch.setattr(cli, "measure", lambda *args, **kwargs: result)
+    monkeypatch.setattr(sys, "argv", ["easyon-scan", "measure", "unused.png", "--out", str(tmp_path/"warn.dxf")])
+    cli.main()
+    assert "exceeds 1 mm" in capsys.readouterr().err

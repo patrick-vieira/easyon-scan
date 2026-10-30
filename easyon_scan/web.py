@@ -18,8 +18,10 @@ PAGE = """<!doctype html><html lang="en"><meta charset="utf-8">
 body{font:18px system-ui;max-width:900px;margin:40px auto;padding:0 20px;background:#f4f5f6}
 button,a{padding:10px}img{width:100%;height:auto} .error{color:#a00}
 </style><h1>EasyON Scan</h1>
-<p>Place light paper on a dark table, inside the assembled four-marker layout.
-Keep the paper flat and all four IDs visible. Real photo accuracy is not yet validated.</p>
+<p>Place light paper on a dark table,
+{% if layout == "fixed" %}inside the assembled 780 × 980 mm four-marker layout.
+{% else %}surrounded by four or more freely placed 90 mm markers.{% endif %}
+Keep the paper flat and all markers visible. Real photo accuracy is not yet validated.</p>
 <form method="post" enctype="multipart/form-data">
 <label>Phone photograph <input type="file" name="photo" accept="image/*" required></label>
 <button>Measure</button></form>
@@ -27,17 +29,21 @@ Keep the paper flat and all four IDs visible. Real photo accuracy is not yet val
 {% if error %}<p class="error">{{error}}</p>{% endif %}
 {% if result %}<h2>{{'%.2f'|format(result.width_mm)}} × {{'%.2f'|format(result.height_mm)}} mm</h2>
 <p>Area: {{'%.1f'|format(result.area_mm2)}} mm².
-Marker residual: {{'%.2f'|format(result.residual_px)}} px.</p>
-{% if result.residual_px > 1 %}<p class="error">Marker residual exceeds 1 px. Inspect placement and photo.</p>{% endif %}
+Marker residual: {{'%.2f'|format(result.residual_mm)}} mm.</p>
+{% if result.residual_mm > 1 %}<p class="error">Marker residual exceeds 1 mm. Inspect placement and photo.</p>{% endif %}
 <img alt="Rectified table with red measured outline" src="data:image/png;base64,{{preview}}">
 <p><a download="pattern.dxf" href="data:application/dxf;base64,{{dxf}}">Download DXF</a></p>
 {% endif %}</html>"""
 
 
-def create_app():
+def create_app(layout="free"):
     app = Flask(__name__)
     app.request_class = MemoryRequest
     app.config.update(MAX_CONTENT_LENGTH=25*1024*1024, MAX_FORM_MEMORY_SIZE=25*1024*1024)
+
+    @app.context_processor
+    def layout_context():
+        return {"layout": layout}
 
     @app.after_request
     def no_cache(response):
@@ -56,7 +62,7 @@ def create_app():
         if upload is None:
             return render_template_string(PAGE, error="Select a photograph"), 400
         try:
-            result = measure(upload.stream)
+            result = measure(upload.stream, layout=layout)
             ok, png = cv.imencode(".png", result.preview)
             if not ok:
                 raise ScanError("Could not encode preview")
