@@ -25,4 +25,4 @@ Small ateliers digitise patterns by hand or with expensive digitising tables. A 
 
 ## License
 
-To be defined.
+Apache License 2.0 — see [LICENSE](LICENSE).
