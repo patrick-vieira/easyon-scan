@@ -1,0 +1,36 @@
+Local validation (2026-10-30)
+Python 3.13.7; OpenCV 4.14.0; NumPy 2.5.4; ezdxf 1.4.5.
+Python >=3.11 is declared; this machine's test run used 3.13.
+
+$ python3 -m venv .venv
+$ .venv/bin/pip install -e '.[test]'
+Installation succeeded.
+
+$ .venv/bin/pytest -q
+8 passed in 2.44s
+
+$ .venv/bin/python -m easyon_scan.synthetic artifacts/synthetic.png
+$ .venv/bin/easyon-scan measure artifacts/synthetic.png --out artifacts/pattern.dxf --preview artifacts/preview.png
+{
+  "area_mm2": 240000.05757400056,
+  "width_mm": 400.1088890660278,
+  "height_mm": 600.1074559763958,
+  "residual_px": 0.165898019204278
+}
+Truth: 400 x 600 mm, 240000 mm2.
+Absolute width error: 0.108889 mm. Height error: 0.107456 mm.
+DXF closed LWPOLYLINE and millimetre units verified by rereading in tests.
+
+$ .venv/bin/easyon-scan sheet --size a4 --out artifacts/markers-a4.pdf
+$ .venv/bin/easyon-scan sheet --size a3 --out artifacts/markers-a3.pdf
+Both PDFs generated; physical page dimensions verified in tests.
+
+$ .venv/bin/pip wheel . --no-deps --wheel-dir artifacts
+Successfully built easyon_scan-0.1.0-py3-none-any.whl
+
+$ .venv/bin/pip check
+No broken requirements found.
+
+CLI web smoke: HTTP 200 at http://127.0.0.1:8765; process stopped afterwards.
+Generated fixtures, PDFs, preview, DXF and wheel are local in ignored artifacts/.
+No real-photo accuracy validation was performed.
