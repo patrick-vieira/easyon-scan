@@ -3,6 +3,10 @@
 Turn a phone photograph of a flat paper sewing pattern into a closed DXF outline
 in millimetres. Python 3.11+, Apache-2.0. Early experimental release.
 
+![easyon-scan in 60 seconds](docs/easyon-scan.gif)
+
+[Watch with narration (MP4, 57 s)](docs/easyon-scan.mp4)
+
 ## Test it in 5 minutes
 
 ```sh
