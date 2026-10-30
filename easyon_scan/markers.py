@@ -63,11 +63,11 @@ def sheet(out, size="a4", layout="free", marker_id=None):
             "EN: Print at 100%, actual size; do not fit to page.",
             "Check the 100 mm ruler and each 90 x 90 mm black square.",
             "Cut on the lines, keeping the white borders around markers.",
-            "Place 4+ cards anywhere around the pattern, flat on the table.",
+            "4+ cards must surround the WHOLE pattern with a clear gap.",
             "PT: Imprima a 100 %, sem ajustar à página; confira a régua.",
             "Confira 100 mm na regua e 90 x 90 mm em cada quadrado.",
-            "Recorte nas linhas. Espalhe 4+ cartões à volta do molde.",
-            "Mesmo plano; fotografe todo o molde e todos os marcadores.",
+            "4+ cartões devem CERCAR TODO o molde, com folga.",
+            "Mesmo plano. Molde longe dos cartões e do limite entre eles.",
         ]
     for _, (x, y) in cards:
         x, y = x-5, y-5

@@ -83,3 +83,31 @@ Tests also cover metric residual >1 mm, CLI warning, fixed CLI, exact-corner
 calibration, single-card printing, PDF sizes, upload/download and DXF units.
 $ git diff --check
 Passed.
+
+Chiyo review validation (2026-10-30)
+$ .venv/bin/pytest -q
+27 passed. Includes competing small white sheet/circular cup rejection,
+singular homography, horizon crossing the hull, excessive metric hull area,
+and an enlarged metric scene whose preview is capped at 4000 px.
+Existing random-pose, fixed/free CLI, DXF, PDF and web tests remain passing.
+
+$ .venv/bin/python -m easyon_scan.synthetic artifacts/review-synthetic.png
+$ .venv/bin/easyon-scan measure artifacts/review-synthetic.png --out artifacts/review.dxf --preview artifacts/review-preview.png
+area_mm2=240336.41545715852; width_mm=400.3682861328125;
+height_mm=600.6294555664062; residual_mm=0.0296290053960368.
+$ .venv/bin/easyon-scan measure artifacts/review-synthetic.png --layout fixed --out artifacts/review-fixed.dxf
+area_mm2=240000.05757400056; width_mm=400.1088890660278;
+height_mm=600.1074559763958; residual_mm=0.06266859178375976.
+Both CLI runs succeeded; dimension errors remain below 1 mm.
+
+$ .venv/bin/easyon-scan sheet --out markers-free-a4.pdf
+$ pdftoppm -scale-to 1400 -png -singlefile markers-free-a4.pdf artifacts/review-sheet
+Regenerated PDF visually inspected: EN/PT surround-the-whole-pattern and
+clearance instructions fit on the A4 page; markers and ruler remain visible.
+README includes placement ASCII figure and explains contour ambiguity rejection.
+Candidate bounds: 0.5–85% of image-space working hull area, solidity >=0.35,
+with >=2 px clearance. These are broad heuristics, not object recognition.
+Metric hull bounds: 1000–100000000 mm2; maximum span 100000 mm.
+No real-photo validation was performed.
+$ git diff --check
+Passed.

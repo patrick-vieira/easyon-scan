@@ -68,11 +68,18 @@ def measure(source, layout="free"):
     photo = np.concatenate([found[i] for i in selected]).astype(np.float32)
     photo = cv.cornerSubPix(gray, photo.reshape(-1, 1, 2), (5, 5), (-1, -1),
                             (cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 40, .001)).reshape(-1, 2).astype(float)
+    try:
+        return _measure_calibrated(image, gray, photo, layout)
+    except (np.linalg.LinAlgError, FloatingPointError) as exc:
+        raise ScanError("Degenerate marker layout") from exc
+
+
+def _measure_calibrated(image, gray, photo, layout):
     if layout == "free":
         inverse, world, residual_mm = free_homography(photo)
         homography = np.linalg.inv(inverse)
     else:
-        world = np.concatenate([corners_mm(i) for i in selected])
+        world = np.concatenate([corners_mm(i) for i in range(4)])
         homography, _ = cv.findHomography(world, photo, 0)
         if homography is None:
             raise ScanError("Degenerate marker layout")
@@ -88,6 +95,19 @@ def measure(source, layout="free"):
             raise ScanError("Central working area is outside the photo")
     else:
         roi = cv.convexHull(photo.astype(np.float32)).reshape(-1, 2)
+    # A projective horizon must not cross the working hull. Check before
+    # perspectiveTransform (which maps zero denominators to zero).
+    denominators = np.c_[roi, np.ones(len(roi))] @ inverse[2]
+    if (not np.isfinite(denominators).all() or
+            np.min(np.abs(denominators)) < 1e-8 * np.max(np.abs(denominators)) or
+            np.any(denominators > 0) != np.all(denominators > 0)):
+        raise ScanError("Degenerate homography across working area")
+    metric_roi = project(roi, inverse)
+    hull_area = cv.contourArea(roi.astype(np.float32))
+    metric_area = cv.contourArea(metric_roi.astype(np.float32))
+    if (not np.isfinite(metric_roi).all() or not 1000 <= metric_area <= 100_000_000
+            or np.max(np.ptp(metric_roi, axis=0)) > 100_000 or hull_area < 100):
+        raise ScanError("Extreme working hull geometry; reposition markers and retake photo")
     a = np.maximum(np.floor(roi.min(0)-3).astype(int), 0)
     b = np.minimum(np.ceil(roi.max(0)+3).astype(int), [gray.shape[1]-1, gray.shape[0]-1])
     crop = gray[a[1]:b[1]+1, a[0]:b[0]+1]
@@ -107,11 +127,29 @@ def measure(source, layout="free"):
     contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
     if not contours:
         raise ScanError("No paper outline found")
-    outline = max(contours, key=cv.contourArea).reshape(-1, 2)
-    if layout == "free":
-        clearance = cv.distanceTransform(valid, cv.DIST_L2, 3)
+    clearance = cv.distanceTransform(valid, cv.DIST_L2, 3)
+    candidates = []
+    touching = False
+    for contour in contours:
+        area = cv.contourArea(contour)
+        # Broad bounds allow concave sewing patterns; no rectangle assumption.
+        if not .005 <= area / hull_area <= .85:
+            continue
+        convex_area = cv.contourArea(cv.convexHull(contour))
+        if convex_area <= 0 or area / convex_area < .35:
+            continue
+        outline = contour.reshape(-1, 2)
         if np.min(clearance[outline[:, 1], outline[:, 0]]) < 2:
-            raise ScanError("Paper touches marker cards or working area edge; leave a gap")
+            touching = True
+            continue
+        candidates.append(outline)
+    if len(candidates) > 1:
+        raise ScanError("Multiple plausible paper outlines; remove light objects from the table")
+    if touching:
+        raise ScanError("Paper touches marker cards or working area edge; surround the whole pattern with a gap")
+    if not candidates:
+        raise ScanError("No plausible paper outline found")
+    outline = candidates[0]
     pixels = outline.astype(float)+a
     pixels = cruzamento(gray.astype(np.float32), pixels, threshold)
     mm = cv.perspectiveTransform(pixels[None], inverse)[0]
@@ -124,10 +162,12 @@ def measure(source, layout="free"):
         raise ScanError("Invalid or too small paper outline")
     if layout == "free":
         origin = mm.min(0)-20
-        extent = np.ceil(mm.max(0)-origin+20).astype(int)
-        shift = np.array([[1.,0.,-origin[0]],[0.,1.,-origin[1]],[0.,0.,1.]])
+        span = mm.max(0)-origin+20
+        scale = min(1., 4000. / np.max(span))
+        extent = np.clip(np.ceil(span * scale).astype(int), 1, 4000)
+        shift = np.array([[scale,0.,-origin[0]*scale],[0.,scale,-origin[1]*scale],[0.,0.,1.]])
         preview = cv.warpPerspective(image, shift @ inverse, tuple(extent))
-        cv.polylines(preview, [np.rint(mm-origin).astype(np.int32)], True, (0,0,255), 2)
+        cv.polylines(preview, [np.rint((mm-origin)*scale).astype(np.int32)], True, (0,0,255), 2)
         width, height = sorted(cv.minAreaRect(mm.astype(np.float32))[1])
     else:
         preview = cv.warpPerspective(image, inverse, (WIDTH_MM, HEIGHT_MM))

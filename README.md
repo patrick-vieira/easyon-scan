@@ -23,11 +23,24 @@ size**, without fitting to the page. Check the 100 mm ruler and each black
 90 × 90 mm square with a physical ruler. Cut the four cards along the cut lines,
 keeping their white borders.
 
-Spread the cards **anywhere around the pattern** on a dark, matte table, with any
-rotation. No rectangle, tape measure or prescribed spacing is needed. Use four
+Place the cards on all sides so they **surround the entire pattern with clearance**
+on a dark, matte table, with any rotation. No rectangle, tape measure or prescribed spacing is needed. Use four
 or more distinct ArUco DICT_4X4_50 IDs (0–49), all with 90 mm black squares.
 Keep the cards and light paper flat in the **same plane**, with a gap between
-cards and pattern. The complete pattern must fit inside the markers' convex hull.
+cards and pattern. The complete pattern must sit well inside the markers' convex
+hull (the boundary joining the outermost markers). Contours touching that boundary
+or the marker cards are rejected. Leave a visible strip of dark table all around.
+
+```text
+[ID 0]                         [ID 1]
+       +-------------------+
+       |   paper pattern   |
+       +-------------------+
+          dark table gap
+[ID 3]                         [ID 2]
+```
+
+Keep other light objects and spare paper off the working area.
 
 Photograph from above with the whole pattern and all markers visible. Use even
 lighting and the original photograph; avoid glare, shadows and ultrawide lenses.
@@ -97,9 +110,11 @@ against every corner. The first marker fixes the arbitrary coordinate frame.
 The reported residual is RMS Euclidean corner error in mm; above 1 mm produces
 a warning. Coherent printer scale errors can still pass this check.
 
-The largest light contour inside the marker hull is segmented after excluding
-marker cards. Its intensity edge is refined in the source photo before mapping
-to mm. Rectification is used for preview only.
+Light contours inside the marker hull are checked for relative area, solidity
+and clearance from cards and the hull. Multiple plausible contours are rejected
+with a request to remove light objects. No rectangular shape is required. Its intensity edge is refined in the source photo before mapping
+to mm. Rectification is used for preview only, capped at 4000 pixels per side.
+Degenerate homographies and extreme working hulls are rejected.
 
 Lens distortion is not corrected. Printer scaling, placement error, paper curl,
 shadows and poor contrast can dominate the error. Use the same plane for paper

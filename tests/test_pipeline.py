@@ -142,3 +142,44 @@ def test_cli_warns_in_mm(scene, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["easyon-scan", "measure", "unused.png", "--out", str(tmp_path/"warn.dxf")])
     cli.main()
     assert "exceeds 1 mm" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("shape", ["sheet", "cup"])
+def test_competing_light_object(shape):
+    image, _ = generate(perspective=False)
+    if shape == "sheet":
+        image[1000:1300, 400:580] = 240
+    else:
+        cv.circle(image, (480, 1600), 110, (240, 240, 240), -1)
+    with pytest.raises(ScanError, match="remove light objects"):
+        measure(image)
+
+
+@pytest.mark.parametrize("kind", ["singular", "horizon", "huge"])
+def test_bad_homography(monkeypatch, kind):
+    from easyon_scan import scan
+    image, _ = generate(perspective=False)
+    inverse = np.eye(3)
+    if kind == "singular":
+        inverse[1] = inverse[0]
+    elif kind == "horizon":
+        inverse[2] = [.001, 0, -1.]
+    else:
+        inverse[:2, :2] *= 100
+    monkeypatch.setattr(scan, "free_homography", lambda photo: (inverse, photo, 0.))
+    with pytest.raises(ScanError, match="Degenerate|Extreme"):
+        measure(image)
+
+
+def test_large_preview_is_bounded(monkeypatch):
+    from easyon_scan import scan
+    original = scan.free_homography
+    def enlarged(photo):
+        inverse, world, residual = original(photo)
+        scale = np.diag([8., 8., 1.])
+        return scale @ inverse, world * 8, residual * 8
+    monkeypatch.setattr(scan, "free_homography", enlarged)
+    image, _ = generate(perspective=False)
+    result = measure(image)
+    assert max(result.preview.shape[:2]) == 4000
+    assert result.height_mm > 4800
