@@ -28,6 +28,8 @@ def dxf_bytes(contour_mm):
     ymax = all_points[:, 1].max()
     doc = ezdxf.new("R2010")
     doc.units = 4
+    for name in ("NOTCH", "GRAIN"):
+        doc.layers.new(name)
     for i, piece in enumerate(pieces):
         layer = "OUTLINE" if len(pieces) == 1 else f"PIECE_{i+1:03d}"
         doc.layers.new(layer)
@@ -37,6 +39,14 @@ def dxf_bytes(contour_mm):
             xy[:, 0] -= origin[0]
             xy[:, 1] = ymax - xy[:, 1]
             doc.modelspace().add_lwpolyline(xy, close=True, dxfattribs={"layer": layer})
+        for name, marks in (("NOTCH", piece.notches_mm), ("GRAIN", piece.grain_lines_mm)):
+            for mark in marks:
+                xy = np.asarray(mark, dtype=float).copy()
+                if xy.ndim != 2 or xy.shape[1] != 2 or not np.isfinite(xy).all():
+                    raise ValueError("Expected finite Nx2 annotation")
+                xy[:, 0] -= origin[0]
+                xy[:, 1] = ymax - xy[:, 1]
+                doc.modelspace().add_lwpolyline(xy, close=True, dxfattribs={"layer": name})
     stream = StringIO()
     doc.write(stream)
     return stream.getvalue().encode("utf-8")

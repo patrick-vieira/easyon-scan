@@ -13,6 +13,7 @@ from easyon_scan.synthetic import Parameters, generate_case
 
 PROFILES = {
     'clean': Parameters(),
+    'notches and grain': Parameters(annotations=True),
     'perspective': Parameters(tilt_deg=25),
     'radial distortion': Parameters(radial_k1=.08),
     'soft shadow': Parameters(shadow=.35),
