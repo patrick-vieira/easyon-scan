@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser(prog="easyon-scan")
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("sheet", help="Print-and-cut marker cards with assembly instructions")
+    p.add_argument("--sketch-kit", action="store_true")
     p.add_argument("--id", type=int, help="Print one marker (ID 0–49) per sheet")
     p.add_argument("--size", choices=("a4", "a3"), default="a4")
     p.add_argument("--out", required=True)
@@ -70,7 +71,11 @@ def main():
             generate_batch(args.out, count=args.count, seed=args.seed, parameters=parameters)
             print(f"Saved {args.count} cases and manifest.json to {args.out}")
         elif args.command == "sheet":
-            sheet(args.out, args.size, args.layout, args.id, marker_size=args.marker_size)
+            if args.sketch_kit:
+                from .sketch import sketch_kit
+                sketch_kit(args.out)
+            else:
+                sheet(args.out, args.size, args.layout, args.id, marker_size=args.marker_size)
             print(f"Saved {args.out}. Print at 100%; cut and place as instructed.")
         elif args.command == "measure":
             options = dict(profile=args.profile, marker_size=args.marker_size, layout_file=args.layout_file, save_layout=args.save_layout)

@@ -302,7 +302,7 @@ def measure_all(image, reference, check_reference=None, grid_pitch_mm=5.):
         poly=cv.approxPolyDP(metric[i],max(.4,.007*cv.arcLength(metric[i],True)),True).reshape(-1,2)
         sides=np.linalg.norm(poly-np.roll(poly,-1,axis=0),axis=1)
         kind='papel quadriculado' if i==paper else ('BIC J26 deitado' if i==main else 'chave L')
-        obj=dict(id=ident,kind=kind,ignored=False,width_mm=float(dims[0]),length_mm=float(dims[1]),sides_mm=sides.tolist(),polygon_mm=poly.tolist(),correction='homografia do plano da mesa (malha 5 mm)',grid=grid if i==paper else None,uncertain_segmentation=False)
+        obj=dict(id=ident,kind=kind,ignored=False,width_mm=float(dims[0]),length_mm=float(dims[1]),sides_mm=sides.tolist(),polygon_mm=poly.tolist(),correction=f'homografia do plano da mesa (malha {grid_pitch_mm:g} mm)',grid=grid if i==paper else None,uncertain_segmentation=False)
         if kind=='chave L': obj['arms']=arm_measurements(metric[i])
         objects.append(obj)
         if i!=main: pieces.append(Piece(poly,[]))
@@ -333,7 +333,7 @@ def measure_all(image, reference, check_reference=None, grid_pitch_mm=5.):
             y=(y+44)%(canvas.height-h)
         occupied.append((x,y,w,h));draw.rounded_rectangle((x,y,x+w,y+h),8,fill=(20,25,32));draw.text((x+8,y+2),text,font=font,fill='white')
     # Add an expanded top margin for a readable measurement legend.
-    legend=['PLANO: malha 5 mm | medidas em mm']
+    legend=[f'PLANO: malha {grid_pitch_mm:g} mm | medidas em mm']
     for o in objects:
         if o.get('ignored'):legend.append(f"{o['id']} {o['kind']}: {o['reason']}")
         elif 'arms' in o:legend.append(f"{o['id']} chave: longo {o['arms']['long_mm']:.1f} | curto {o['arms']['short_mm']:.1f}")

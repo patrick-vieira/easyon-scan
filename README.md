@@ -521,3 +521,49 @@ Paper reports four contour sides. Ignored background candidates have no exported
 DXF outline or measurements. The numbered overlay includes 28 px labels and a
 measurement legend. Inspect segmentation and exclusions against the photograph.
 Real-photo inputs, overlays and reports remain in the supplied local output tree.
+
+## Automatic web measurements (SCAN-18)
+
+The upload defaults to **Automático / Automatic**. When a square lattice is
+found, the web handler uses the CLI `--all-objects` pipeline: one table-plane
+homography, excluded out-of-plane candidates, numbered overlay, object table,
+JSON and DXF. The selected reference is only a check in this case (default J26
+when none is selected); it does not rescale the plane. Set the physical pitch
+in mm per square, initially 5 mm. Without a grid the existing reference/ArUco
+workflow applies; **Reference only** explicitly selects that workflow.
+The camera preview still checks the selected legacy reference; use photo upload
+for the automatic grid workflow. See [precision notes](docs/precision-notes.md).
+
+## Sketch to pattern (SCAN-19, experimental)
+
+Select **Desenho → molde / Sketch → pattern** on the upload page. Use flat paper,
+light grey/blue ruling and darker pencil or pen with closed, separate outlines.
+The grid is removed by separating light ruling from dark strokes; same-colour
+black grid and sketch strokes are not supported. Thin strokes are simplified
+into smooth piecewise straight polylines, rather than fitted CAD splines.
+Closed contours become pieces; open strokes inside them become INTERNAL markings.
+Inspect all geometry: crossing lines, nested contours, faint pencil, gaps and
+shadows can cause missing or spurious pieces. Do not use internal strokes which
+join opposite outline edges and partition a piece.
+
+Scale can come from the square grid with any user-declared real value: 5 mm per
+square, or 20 mm for a sketch where one square represents 2 cm. Alternatively,
+type a bar length such as `10 cm`; an isolated thin bar is detected automatically.
+If it is ambiguous, also provide its two endpoints in original oriented
+photo pixels, as `[[100,600],[600,600]]`. The bar must be separate from the
+sketch. Bar scaling assumes a frontal photo and does not correct perspective.
+Grid scaling rectifies the detected lattice plane.
+
+Generate a printable light grid and 100 mm scale bar with:
+
+```sh
+easyon-scan sheet --sketch-kit --out sketch-kit.pdf
+```
+
+Print at 100%, verify grid pitch and bar length with a ruler. The results show
+main dimensions and download DXF plus a tiled A4 PDF at 1:1, with 10 mm overlap,
+page row/column labels and alignment crosses. Print the PDF at actual size;
+overlap matching crosses before joining pages. Screen previews fit the display
+and are not physically 1:1. Sketch PDFs are capped at 100 pages and geometry at
+10 m per side. Synthetic tests verify declared scaling, outlines and markings;
+**no real-photo sketch accuracy is claimed**.

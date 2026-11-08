@@ -64,6 +64,7 @@ def test_result_and_reference_handoff(monkeypatch):
         return result
     monkeypatch.setattr(web,'measure',measure)
     monkeypatch.setattr(web,'dxf_bytes',lambda *args,**kwargs:b'DXF')
+    monkeypatch.setattr(web,'load_photo',lambda stream:np.zeros((30,30,3),np.uint8))
     client = web.create_app().test_client()
     response = client.post('/',data={'lang':'pt','reference':'bic','reference_frontal':'true','photo':(BytesIO(b'photo'),'photo.jpg')})
     html = response.get_data(as_text=True)

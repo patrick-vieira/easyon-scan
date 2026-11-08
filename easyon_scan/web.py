@@ -248,6 +248,8 @@ def tr(key):
 
 def warnings_for(result):
     keys = ["verify"]
+    if result.reference == "sketch":
+        return [tr("verify"), "Confira cada contorno e marcação; malha clara e traços escuros. Barra requer foto frontal." if request.values.get("lang", "pt") != "en" else "Inspect every contour and marking; use light ruling and dark strokes. Bars require a frontal photo."]
     if result.reference and result.reference != "aruco":
         keys.append("warning_reference")
     if result.reference == "bic":
@@ -333,18 +335,46 @@ def create_app(layout="free"):
         try:
             import json
             profile = request.files.get("profile")
-            result = measure(upload.stream, layout=layout, profile=json.load(profile.stream) if profile and profile.filename else None, reference=chosen_reference() or None, reference_frontal=request.form.get("reference_frontal") == "true", all_objects=request.form.get("all_objects") == "true", check_reference=request.form.get("check_reference") or None, grid_pitch_mm=float(request.form.get("grid_pitch_mm", 5)))
+            mode = request.form.get("workflow", "auto")
+            if mode not in ("auto", "legacy", "sketch"):
+                raise ValueError("Unknown workflow")
+            source = load_photo(upload.stream)
+            automatic = False
+            if mode == "auto" and layout == "free":
+                from .multi import segments, grid_calibration
+                automatic = any(grid_calibration(source, c, 1., float(request.form.get("grid_pitch_mm", 5))) is not None for c in segments(source))
+            if mode == "sketch":
+                from .sketch import measure_sketch
+                points = request.form.get("bar_points", "").strip()
+                result = measure_sketch(source, grid_pitch_mm=float(request.form.get("grid_pitch_mm", 5)), bar_points=json.loads(points) if points else None, bar_length=request.form.get("bar_length"))
+            else:
+                result = measure(source, layout=layout, profile=json.load(profile.stream) if profile and profile.filename else None, reference=(chosen_reference() or "bic") if automatic else (chosen_reference() or None), reference_frontal=request.form.get("reference_frontal") == "true", all_objects=automatic or request.form.get("all_objects") == "true", check_reference=request.form.get("check_reference") or None, grid_pitch_mm=float(request.form.get("grid_pitch_mm", 5)))
             if request.form.get("response") == "json":
                 return jsonify(result.summary())
             ok, png = cv.imencode(".png", result.preview)
             if not ok:
                 raise ScanError("Could not encode preview")
+            report_table = None
+            if hasattr(result, "objects"):
+                from .multi import table_pt
+                report_table = base64.b64encode(table_pt(result.summary()).encode("utf-8")).decode("ascii")
+            sketch_pdf = None
+            metric_preview = None
+            if mode == "sketch":
+                from .sketch import tiled_pdf, real_size_svg
+                metric_preview = real_size_svg(result)
+                sketch_pdf = base64.b64encode(tiled_pdf(result)).decode("ascii")
             return render_template("index.html", result=result, checks=result.quality_checks,
                 preview=base64.b64encode(png).decode("ascii"),
+                sketch_pdf=sketch_pdf, report_table=report_table,
+                metric_preview=metric_preview,
                 report_json=base64.b64encode(json.dumps(result.summary(),ensure_ascii=False).encode()).decode("ascii") if hasattr(result, "objects") else None,
                 dxf=base64.b64encode(dxf_bytes(result, mode=request.form.get("dxf_mode", "plain"), size=request.form.get("size", "BASE"))).decode("ascii"))
         except (ScanError, UnidentifiedImageError, OSError, ValueError, ImageDecompressionError, cv.error) as exc:
-            return render_template("index.html", **diagnostic_error(exc)), 400
+            diagnostic = diagnostic_error(exc)
+            if request.form.get("workflow") == "sketch":
+                diagnostic["error"] = ("Não foi possível vetorizar. Use malha clara, traços escuros fechados e confira a escala. Se a barra for ambígua, informe seus dois extremos." if request.values.get("lang", "pt") != "en" else "Could not trace the sketch. Use light ruling, dark closed strokes and check the scale. If the bar is ambiguous, enter its two endpoints.")
+            return render_template("index.html", **diagnostic), 400
 
     return app
 

@@ -56,7 +56,7 @@ def test_web_aama_selection():
     from easyon_scan.web import create_app
     result = fixture()
     result.preview = np.zeros((20, 20, 3), np.uint8)
-    with patch('easyon_scan.web.measure', return_value=result):
+    with patch('easyon_scan.web.measure', return_value=result), patch('easyon_scan.web.load_photo', return_value=np.zeros((20,20,3),np.uint8)):
         response = create_app().test_client().post('/', data={
             'photo': (BytesIO(b'unused'), 'photo.jpg'), 'dxf_mode': 'aama', 'size': '42'})
     assert response.status_code == 200
