@@ -188,5 +188,27 @@ def generate_batch(folder, *, count=10, seed=0, parameters=None):
     return document
 
 
+def generate_pieces(*, perspective=False):
+    """Two separated rectangular pieces, each with a rectangular through-hole.
+
+    Ground truth uses the fixed marker frame. Dark interior regions represent
+    visible table, not printed ink; photographs cannot establish that distinction.
+    """
+    image, _ = generate(perspective=False)
+    image[660:2460, 660:1860] = 55
+    pieces = []
+    for left, top, width, height in [(190, 190, 170, 600), (390, 240, 200, 450)]:
+        x, y = (left+30)*3, (top+30)*3
+        image[y:y+height*3, x:x+width*3] = 240
+        image[y+180:y+360, x+120:x+300] = 55
+        pieces.append(dict(width_mm=width, height_mm=height, area_mm2=width*height-3600))
+    if perspective:
+        src = np.float32([[0,0],[2519,0],[2519,3119],[0,3119]])
+        dst = np.float32([[210,100],[2460,280],[2320,3060],[80,2810]])
+        image = cv.warpPerspective(image, cv.getPerspectiveTransform(src,dst),
+                                   (2600,3200), borderValue=(55,)*3)
+    return image, pieces
+
+
 if __name__ == "__main__":
     main()

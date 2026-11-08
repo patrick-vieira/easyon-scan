@@ -30,7 +30,7 @@ Keep the paper flat and all markers visible. Real photo accuracy is not yet vali
 {% if error %}<p class="error">{{error}}</p>{% endif %}
 {% for check in checks or [] %}<p>{{check.name}}: {{check.status}} ({{check.value}}). {{check.message}}</p>{% endfor %}
 {% if result %}<h2>{{'%.2f'|format(result.width_mm)}} × {{'%.2f'|format(result.height_mm)}} mm</h2>
-<p>Area: {{'%.1f'|format(result.area_mm2)}} mm².
+<p>Pieces: {{result.pieces|length}}. Total net area: {{'%.1f'|format(result.area_mm2)}} mm².
 Marker residual: {{'%.2f'|format(result.residual_mm)}} mm.</p>
 {% if result.residual_mm > 1 %}<p class="error">Marker residual exceeds 1 mm. Inspect placement and photo.</p>{% endif %}
 <img alt="Rectified table with red measured outline" src="data:image/png;base64,{{preview}}">
@@ -72,7 +72,7 @@ def create_app(layout="free"):
                 raise ScanError("Could not encode preview")
             return render_template_string(PAGE, result=result, checks=result.quality_checks,
                 preview=base64.b64encode(png).decode("ascii"),
-                dxf=base64.b64encode(dxf_bytes(result.contour_mm)).decode("ascii"))
+                dxf=base64.b64encode(dxf_bytes(result)).decode("ascii"))
         except (ScanError, UnidentifiedImageError, OSError, ValueError, ImageDecompressionError) as exc:
             return render_template_string(PAGE, error=str(exc), checks=getattr(exc, "checks", [])), 400
 

@@ -1,6 +1,6 @@
 # easyon-scan
 
-Turn a phone photograph of a flat paper sewing pattern into a closed DXF outline
+Turn a phone photograph of flat paper sewing pieces into closed DXF outlines
 in millimetres. Python 3.11+, Apache-2.0. Early experimental release.
 
 ![easyon-scan in 60 seconds](docs/easyon-scan.gif)
@@ -40,7 +40,9 @@ or the marker cards are rejected. Leave a visible strip of dark table all around
 [ID 3]                         [ID 2]
 ```
 
-Keep other light objects and spare paper off the working area.
+Keep other light objects and spare paper off the working area: every plausible
+separate light region is treated as a piece. Leave at least 3 mm between pieces.
+Overlapping or touching pieces cannot be separated reliably.
 
 Photograph from above with the whole pattern and all markers visible. Use even
 lighting and the original photograph; avoid glare, shadows and ultrawide lenses.
@@ -59,8 +61,17 @@ request memory. Limits: 25 MB / 40 megapixels; the server binds to localhost.
 In free mode width and height are the shorter and longer sides of the minimum
 rotated bounding rectangle. Coordinates use the lowest detected marker ID as
 the reference frame (origin at its first corner, y down). DXF uses millimetres,
-a closed LWPOLYLINE on OUTLINE, and y up with its origin at the outline's lower
-left. No marker pose is prescribed.
+closed LWPOLYLINEs, and y up with a shared origin at the lower left of all
+pieces. A single piece uses OUTLINE; multiple pieces use PIECE_001, PIECE_002,
+etc., ordered by minimum x then y in the marker reference frame. Each layer
+contains its outer ring and interior holes, with opposite winding (outer
+counterclockwise, holes clockwise in DXF). Relative placement is preserved.
+Width/height describe the bounding envelope of all pieces; area is the sum of
+piece areas minus holes. CLI JSON includes piece count, per-piece area and hole
+count. The Python result exposes `pieces`, each with `contour_mm` and `holes_mm`;
+pass the complete result to `dxf_bytes` / `export_dxf` to export all rings.
+The legacy `result.contour_mm` field contains only the first piece's outer ring.
+The legacy Nx2 export argument still exports one outer contour. No marker pose is prescribed.
 
 ### Camera calibration and photo quality
 
@@ -133,6 +144,9 @@ Tests exercise random free marker poses with 4 and 6 cards at camera tilts
 width/height error below 1 mm
 against a known 400 × 600 mm rectangle, reread the DXF with ezdxf, check PDF page
 sizes, test the upload/download flow, and reject missing references/paper.
+Multi-piece cases cover two pieces with holes in free/fixed layouts, perspective,
+DXF layer assignment, winding, net area and shared placement, plus rejection of
+nested islands, insufficient piece separation and card/hull contacts.
 
 ### Synthetic photo batches
 
@@ -205,16 +219,23 @@ The reported residual is RMS Euclidean corner error in mm; above 1 mm produces
 a warning. Coherent printer scale errors can still pass this check.
 
 Light contours inside the marker hull are checked for relative area, solidity
-and clearance from cards and the hull. Multiple plausible contours are rejected
-with a request to remove light objects. No rectangular shape is required. Its intensity edge is refined in the source photo before mapping
+and clearance from cards and the hull. Several separate plausible contours are accepted as pieces. Nested light
+islands inside holes, invalid rings and pieces less than 3 mm apart are rejected
+as ambiguous. Small regions below the existing 0.5% working-hull area filter
+are ignored; this is not a small-piece detector. No rectangular shape is required.
+Each intensity edge is refined in the source photo before mapping
 to mm. Rectification is used for preview only, capped at 4000 pixels per side.
 Degenerate homographies and extreme working hulls are rejected.
 
 Lens distortion is corrected only when a matching camera profile is supplied. Printer scaling, placement error, paper curl,
 shadows and poor contrast can dominate the error. Use the same plane for paper
-and markers. White tables, multiple pieces, holes and interior markings are not
-supported. Inspect the preview and independently check dimensions before use.
-Only the outer contour is exported: **no notches, grain line, seam allowance,
+and markers. White tables and interior markings are not supported. Interior dark regions
+are exported as holes: the detector cannot distinguish a physical cutout from
+printed ink or a dark shadow. Do not use marked paper; inspect every hole in the
+preview. Light objects may be indistinguishable from pattern pieces, and touching
+or overlapping pieces may appear as one outline. These cases cannot always be
+rejected from a single photo. Inspect the preview and independently check dimensions before use.
+Outer contours and holes are exported: **no notches, grain line, seam allowance,
 grading or AAMA/ASTM semantics**. Audaces compatibility has not been validated.
 
 The detector uses AprilTag corner refinement followed by explicit subpixel

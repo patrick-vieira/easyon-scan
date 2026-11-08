@@ -145,14 +145,13 @@ def test_cli_warns_in_mm(scene, tmp_path, monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("shape", ["sheet", "cup"])
-def test_competing_light_object(shape):
+def test_separate_light_objects_are_pieces(shape):
     image, _ = generate(perspective=False)
     if shape == "sheet":
         image[1000:1300, 400:580] = 240
     else:
         cv.circle(image, (480, 1600), 110, (240, 240, 240), -1)
-    with pytest.raises(ScanError, match="remove light objects"):
-        measure(image)
+    assert len(measure(image).pieces) == 2
 
 
 @pytest.mark.parametrize("kind", ["singular", "horizon", "huge"])
@@ -183,3 +182,66 @@ def test_large_preview_is_bounded(monkeypatch):
     result = measure(image)
     assert max(result.preview.shape[:2]) == 4000
     assert result.height_mm > 4800
+
+
+@pytest.mark.parametrize("layout", ["free", "fixed"])
+@pytest.mark.parametrize("perspective", [False, True])
+def test_multiple_pieces_and_holes(layout, perspective):
+    from easyon_scan.synthetic import generate_pieces
+    from easyon_scan.dxf import dxf_bytes
+    image, truth = generate_pieces(perspective=perspective)
+    result = measure(image, layout=layout)
+    assert len(result.pieces) == 2
+    assert [len(p.holes_mm) for p in result.pieces] == [1, 1]
+    assert abs(result.area_mm2 - sum(p['area_mm2'] for p in truth)) < 300
+    assert result.summary()['piece_count'] == 2
+    doc = ezdxf.read(StringIO(dxf_bytes(result).decode()))
+    entities = list(doc.modelspace().query('LWPOLYLINE'))
+    assert len(entities) == 4
+    assert all(e.closed for e in entities)
+    assert {e.dxf.layer for e in entities} == {'PIECE_001', 'PIECE_002'}
+    for i, piece in enumerate(result.pieces, 1):
+        exported = [e for e in entities if e.dxf.layer == f'PIECE_{i:03d}']
+        areas = [cv.contourArea(np.array(e.get_points('xy'), np.float32), oriented=True) for e in exported]
+        assert areas[0] > 0 and areas[1] < 0
+        assert abs(sum(areas)-piece.polygon.area) < .1
+    # Relative placement must survive export, without rebasing each piece.
+    dx = min(e.get_points('xy')[0][0] for e in entities if e.dxf.layer == 'PIECE_002')
+    assert dx > 100
+
+
+@pytest.mark.parametrize('kind', ['nested', 'nearby', 'hull', 'card'])
+def test_ambiguous_or_touching_pieces_rejected(kind):
+    image, _ = generate(perspective=False)
+    if kind == 'nested':
+        image[900:1500, 900:1500] = 55
+        image[1050:1300, 1050:1300] = 240
+    elif kind == 'nearby':
+        image[660:2460, 1200:1206] = 55
+    elif kind == 'hull':
+        image[660:2460, 0:700] = 240
+    else:
+        image[360:700, 330:700] = 240
+    with pytest.raises(ScanError, match='Ambiguous|touches'):
+        measure(image)
+
+
+def test_multi_piece_web_and_cli(tmp_path):
+    from easyon_scan.synthetic import generate_pieces
+    image, _ = generate_pieces()
+    encoded = cv.imencode('.png', image)[1].tobytes()
+    response = create_app().test_client().post('/', data={'photo': (BytesIO(encoded), 'pieces.png')})
+    assert response.status_code == 200
+    assert b'Pieces: 2' in response.data
+    match = re.search(rb'data:application/dxf;base64,([^\"]+)', response.data)
+    doc = ezdxf.read(StringIO(base64.b64decode(match[1]).decode()))
+    assert len(doc.modelspace().query('LWPOLYLINE')) == 4
+    photo = tmp_path/'pieces.png'
+    photo.write_bytes(encoded)
+    out = tmp_path/'pieces.dxf'
+    run = subprocess.run([sys.executable, '-c', 'from easyon_scan.cli import main; main()',
+                          'measure', str(photo), '--out', str(out)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    import json
+    assert json.loads(run.stdout)['piece_count'] == 2
+    assert len(ezdxf.readfile(out).modelspace().query('LWPOLYLINE')) == 4
