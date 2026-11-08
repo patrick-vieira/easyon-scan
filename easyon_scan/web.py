@@ -201,6 +201,35 @@ STRINGS = {'pt': {'lang': 'pt-BR',
                        'directly overhead.',
         'preview_large': 'Preview must be at most 500 KB and 1280 pixels per side.'}}
 
+for language, messages in {
+    'pt': {'reference_border': 'A referência toca a borda da imagem. Fotografe o objeto inteiro.',
+           'reference_missing': 'Nenhum objeto com o formato da referência foi encontrado.',
+           'reference_ambiguous': 'Há dois candidatos semelhantes à referência. Retire o objeto extra.',
+           'pattern_missing': 'Molde não encontrado.', 'pattern_border': 'O molde toca a borda da imagem.',
+           'choose_photo': 'Escolher fotografia', 'diagnostic': 'Diagnóstico: candidatos em amarelo e referência em verde'},
+    'en': {'reference_border': 'Reference touches the image border. Photograph the entire object.',
+           'reference_missing': 'No object with the reference shape found.',
+           'reference_ambiguous': 'Two similar reference candidates. Remove the extra object.',
+           'pattern_missing': 'Pattern not found.', 'pattern_border': 'Pattern touches the image border.',
+           'choose_photo': 'Choose photograph', 'diagnostic': 'Diagnostic: candidates in yellow and reference in green'}
+}.items():
+    STRINGS[language].update(messages)
+STRINGS['pt']['reference_tip'] = 'Separe a referência e o molde sobre a mesa, com todas as bordas visíveis. Qualquer posição ou orientação. Mantenha tudo no mesmo plano e confira as dimensões com uma régua.'
+STRINGS['en']['reference_tip'] = 'Separate reference and pattern on the table with all edges visible, in any position or orientation. Keep everything coplanar and verify dimensions with a ruler.'
+
+
+def diagnostic_error(exc):
+    overlay = getattr(exc, 'overlay', None)
+    encoded = None
+    if overlay is not None:
+        scale = min(1., 1200/max(overlay.shape[:2]))
+        overlay = cv.resize(overlay, None, fx=scale, fy=scale)
+        ok, png = cv.imencode('.png', overlay)
+        if ok:
+            encoded = base64.b64encode(png).decode('ascii')
+    return dict(error=tr(getattr(exc, 'code', 'error')), overlay=encoded,
+                checks=getattr(exc, 'checks', []))
+
 class MemoryRequest(Request):
     def _get_file_stream(self, total_content_length, content_type, filename=None, content_length=None):
         return BytesIO()
@@ -292,7 +321,7 @@ def create_app(layout="free"):
             ready = all(r["status"] != "reject" for r in rows)
             return jsonify(ready=ready, lights=lights, checks=[dict(row, message=tr("adjust_tip")) for row in rows])
         except (ScanError, UnidentifiedImageError, OSError, ValueError, ImageDecompressionError, cv.error) as exc:
-            return jsonify(ready=False, lights=dict(markers="reject", sharpness="unknown", tilt="unknown"), error=tr("error")), 400
+            return jsonify(ready=False, lights=dict(markers="reject", sharpness="unknown", tilt="unknown"), error=tr(getattr(exc, "code", "error"))), 400
 
     @app.route("/", methods=["GET", "POST"])
     def index():
@@ -304,7 +333,7 @@ def create_app(layout="free"):
         try:
             import json
             profile = request.files.get("profile")
-            result = measure(upload.stream, layout=layout, profile=json.load(profile.stream) if profile and profile.filename else None, reference=chosen_reference() or None, reference_frontal=request.form.get("reference_frontal") == "true")
+            result = measure(upload.stream, layout=layout, profile=json.load(profile.stream) if profile and profile.filename else None, reference=chosen_reference() or None, reference_frontal=request.form.get("reference_frontal") == "true", all_objects=request.form.get("all_objects") == "true", check_reference=request.form.get("check_reference") or None, grid_pitch_mm=float(request.form.get("grid_pitch_mm", 5)))
             if request.form.get("response") == "json":
                 return jsonify(result.summary())
             ok, png = cv.imencode(".png", result.preview)
@@ -312,9 +341,10 @@ def create_app(layout="free"):
                 raise ScanError("Could not encode preview")
             return render_template("index.html", result=result, checks=result.quality_checks,
                 preview=base64.b64encode(png).decode("ascii"),
+                report_json=base64.b64encode(json.dumps(result.summary(),ensure_ascii=False).encode()).decode("ascii") if hasattr(result, "objects") else None,
                 dxf=base64.b64encode(dxf_bytes(result, mode=request.form.get("dxf_mode", "plain"), size=request.form.get("size", "BASE"))).decode("ascii"))
         except (ScanError, UnidentifiedImageError, OSError, ValueError, ImageDecompressionError, cv.error) as exc:
-            return render_template("index.html", error=tr("error"), checks=getattr(exc, "checks", [])), 400
+            return render_template("index.html", **diagnostic_error(exc)), 400
 
     return app
 
