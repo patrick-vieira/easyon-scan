@@ -595,3 +595,12 @@ hand-drawn line was used. The web page reports, for example, **a impressão saiu
 3,2% maior / print was 3.2% larger**. These are ruler-relative scale corrections,
 not a real-photo accuracy guarantee. Synthetic tests cover independent ±5%
 printer stretch and ruler-drawn references.
+
+## Garment assembly (experimental, v0)
+
+Convert DXF panels and edges to an explicit millimetre JSON intermediate format:
+`easyon-scan assembly pattern.dxf --out assembly.json`.
+Unitless DXF requires an explicit `--assume-units mm|cm|in` declaration.
+See [garment-assembly/v0](docs/garment-assembly-v0.md) for the format and limits.
+Seams are proposals for human review; this adapter emits no seams and review is pending.
+Optional allowance offsets are marked hypotheses. Nothing here is 3D yet.
