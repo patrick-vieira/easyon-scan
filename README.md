@@ -567,3 +567,31 @@ overlap matching crosses before joining pages. Screen previews fit the display
 and are not physically 1:1. Sketch PDFs are capped at 100 pages and geometry at
 10 m per side. Synthetic tests verify declared scaling, outlines and markings;
 **no real-photo sketch accuracy is claimed**.
+
+### Printer calibration per axis (SCAN-20)
+
+The sketch kit reserves side margins for light blue dotted X and Y references,
+with `0`, `10 cm` and `medido: ____ mm` boxes. Keep the complete grid and both
+references in the photograph. Measure the printed references with your own
+ruler and enter each actual length in **valor medido com a sua régua / value
+measured with your ruler**, in mm. Alternatively, draw a separate known length
+with a dark pen directly over each dotted reference, starting at zero and
+remaining within its endpoints; enter that drawn length. Handwriting is not
+read automatically. Keep measurements and other ink outside the drawing grid.
+The blue references require a colour photograph; do not print in greyscale.
+
+```sh
+easyon-scan sheet --sketch-kit --out sketch-kit.pdf
+easyon-scan measure sketch.jpg --sketch --calib-mm-x 105 --calib-mm-y 95 \
+  --out pattern.dxf --preview preview.png
+```
+
+The grid provides perspective rectification; each supplied ruler value replaces
+its nominal axis scale for all outlines, internal markings and exports. Omitted
+axes retain the declared grid scale. Missing calibration references cause an
+error when their measurements are supplied. JSON includes per-axis detected
+length, correction factor, signed print stretch percentage and whether a dark
+hand-drawn line was used. The web page reports, for example, **a impressão saiu
+3,2% maior / print was 3.2% larger**. These are ruler-relative scale corrections,
+not a real-photo accuracy guarantee. Synthetic tests cover independent ±5%
+printer stretch and ruler-drawn references.

@@ -346,7 +346,7 @@ def create_app(layout="free"):
             if mode == "sketch":
                 from .sketch import measure_sketch
                 points = request.form.get("bar_points", "").strip()
-                result = measure_sketch(source, grid_pitch_mm=float(request.form.get("grid_pitch_mm", 5)), bar_points=json.loads(points) if points else None, bar_length=request.form.get("bar_length"))
+                result = measure_sketch(source, grid_pitch_mm=float(request.form.get("grid_pitch_mm", 5)), bar_points=json.loads(points) if points else None, bar_length=request.form.get("bar_length"), calib_mm_x=request.form.get("calib_mm_x") or None, calib_mm_y=request.form.get("calib_mm_y") or None)
             else:
                 result = measure(source, layout=layout, profile=json.load(profile.stream) if profile and profile.filename else None, reference=(chosen_reference() or "bic") if automatic else (chosen_reference() or None), reference_frontal=request.form.get("reference_frontal") == "true", all_objects=automatic or request.form.get("all_objects") == "true", check_reference=request.form.get("check_reference") or None, grid_pitch_mm=float(request.form.get("grid_pitch_mm", 5)))
             if request.form.get("response") == "json":
