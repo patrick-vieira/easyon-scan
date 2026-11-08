@@ -1,0 +1,38 @@
+WEBVTT
+
+00:00:00.400 --> 00:00:05.912
+Small studios still copy paper sewing patterns by hand, or pay for a digitizing table.
+
+00:00:06.733 --> 00:00:15.641
+easyon-scan needs one phone photo with printed marker cards around the pattern, and returns a closed DXF outline in millimetres.
+
+00:00:16.467 --> 00:00:19.893
+New: lens calibration and photo quality checks.
+
+00:00:19.893 --> 00:00:24.486
+A distorted or blurry photo is rejected, not silently measured.
+
+00:00:25.300 --> 00:00:29.924
+Several pieces with holes in one photo, plus notches and grain lines.
+
+00:00:30.733 --> 00:00:36.245
+An experimental AAMA and ASTM style export.
+
+00:00:37.067 --> 00:00:41.560
+Guided capture checks markers, sharpness and tilt before you shoot.
+
+00:00:42.367 --> 00:00:45.606
+And large patterns can be joined from several photos.
+
+00:00:46.433 --> 00:00:49.946
+Every number here comes from synthetic photos.
+
+00:00:49.946 --> 00:00:53.382
+Accuracy on real photos is not validated yet.
+
+00:00:54.200 --> 00:00:55.552
+Try it in five minutes.
+
+00:00:55.552 --> 00:00:56.551
+It's open source.
+
