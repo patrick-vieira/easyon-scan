@@ -60,7 +60,7 @@ def main():
             print(f"Saved {args.out}. Print at 100%; cut and place as instructed.")
         elif args.command == "measure":
             result = measure(args.photo, layout=args.layout, profile=args.profile)
-            export_dxf(result.contour_mm, args.out)
+            export_dxf(result, args.out)
             if args.preview and not cv.imwrite(args.preview, result.preview):
                 raise OSError("Could not write preview")
             print(json.dumps(result.summary(), indent=2))

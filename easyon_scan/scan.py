@@ -11,6 +11,16 @@ class ScanError(ValueError):
     """The photograph cannot be measured reliably."""
 
 @dataclass
+class Piece:
+    contour_mm: np.ndarray
+    holes_mm: list
+
+    @property
+    def polygon(self):
+        return Polygon(self.contour_mm, self.holes_mm)
+
+
+@dataclass
 class Measurement:
     contour_mm: np.ndarray
     area_mm2: float
@@ -20,10 +30,15 @@ class Measurement:
     residual_mm: float
     preview: np.ndarray
     quality_checks: list = None
+    pieces: list = None
 
     def summary(self):
-        return {k: getattr(self, k) for k in
+        result = {k: getattr(self, k) for k in
                 ("area_mm2", "width_mm", "height_mm", "residual_px", "residual_mm", "quality_checks")}
+        result["piece_count"] = len(self.pieces or [])
+        result["pieces"] = [{"area_mm2": p.polygon.area,
+                             "hole_count": len(p.holes_mm)} for p in self.pieces or []]
+        return result
 
 
 def load_photo(source):
@@ -135,42 +150,64 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False):
         raise ScanError("Need light paper on a contrasting dark table")
     threshold = (float(np.median(dark))+float(np.median(light)))/2
     mask = ((crop > threshold) & (valid > 0)).astype(np.uint8)*255
-    contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
+    contours, hierarchy = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_NONE)
     if not contours:
         raise ScanError("No paper outline found")
     clearance = cv.distanceTransform(valid, cv.DIST_L2, 3)
     candidates = []
     touching = False
-    for contour in contours:
+    for index, contour in enumerate(contours):
+        if hierarchy[0, index, 3] != -1:
+            continue
         area = cv.contourArea(contour)
         # Broad bounds allow concave sewing patterns; no rectangle assumption.
         if not .005 <= area / hull_area <= .85:
             continue
         convex_area = cv.contourArea(cv.convexHull(contour))
         if convex_area <= 0 or area / convex_area < .35:
-            continue
+            raise ScanError("Ambiguous paper outline; separate pieces and remove light objects")
         outline = contour.reshape(-1, 2)
         if np.min(clearance[outline[:, 1], outline[:, 0]]) < 2:
             touching = True
             continue
-        candidates.append(outline)
-    if len(candidates) > 1:
-        raise ScanError("Multiple plausible paper outlines; remove light objects from the table")
+        candidates.append(index)
     if touching:
         raise ScanError("Paper touches marker cards or working area edge; surround the whole pattern with a gap")
     if not candidates:
         raise ScanError("No plausible paper outline found")
-    outline = candidates[0]
-    pixels = outline.astype(float)+a
-    pixels = cruzamento(gray.astype(np.float32), pixels, threshold)
-    mm = cv.perspectiveTransform(pixels[None], inverse)[0]
-    if len(mm) < 20 or not np.isfinite(mm).all():
-        raise ScanError("Invalid outline")
-    if layout == "fixed" and min((mm[:,0]-x0).min(), (x1-mm[:,0]).min(), (mm[:,1]-y0).min(), (y1-mm[:,1]).min()) < 3:
-        raise ScanError("Paper touches working area edge; leave at least 3 mm clearance")
-    polygon = Polygon(mm)
-    if not polygon.is_valid or polygon.area < 100:
-        raise ScanError("Invalid or too small paper outline")
+    channel = gray.astype(np.float32)
+
+    def refine(index):
+        pixels = contours[index].reshape(-1, 2).astype(float)+a
+        pixels = cruzamento(channel, pixels, threshold)
+        ring = project(pixels, inverse)
+        if len(ring) < 20 or not np.isfinite(ring).all():
+            raise ScanError("Invalid or ambiguous outline")
+        return ring
+
+    pieces = []
+    for index in candidates:
+        outer = refine(index)
+        if layout == "fixed" and min((outer[:,0]-x0).min(), (x1-outer[:,0]).min(),
+                                      (outer[:,1]-y0).min(), (y1-outer[:,1]).min()) < 3:
+            raise ScanError("Paper touches working area edge; leave at least 3 mm clearance")
+        holes = []
+        child = hierarchy[0, index, 2]
+        while child != -1:
+            if hierarchy[0, child, 2] != -1:
+                raise ScanError("Ambiguous nested outlines; remove light objects from holes")
+            holes.append(refine(child))
+            child = hierarchy[0, child, 0]
+        piece = Piece(outer, holes)
+        if not piece.polygon.is_valid or piece.polygon.area < 100:
+            raise ScanError("Invalid or too small paper outline")
+        pieces.append(piece)
+    pieces.sort(key=lambda p: tuple(p.contour_mm.min(0)))
+    for i, piece in enumerate(pieces):
+        if any(piece.polygon.distance(other.polygon) < 3 for other in pieces[:i]):
+            raise ScanError("Ambiguous nearby outlines; separate pieces by at least 3 mm")
+    mm = np.concatenate([p.contour_mm for p in pieces])
+    rings = [ring for p in pieces for ring in [p.contour_mm, *p.holes_mm]]
     if layout == "free":
         origin = mm.min(0)-20
         span = mm.max(0)-origin+20
@@ -178,10 +215,10 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False):
         extent = np.clip(np.ceil(span * scale).astype(int), 1, 4000)
         shift = np.array([[scale,0.,-origin[0]*scale],[0.,scale,-origin[1]*scale],[0.,0.,1.]])
         preview = cv.warpPerspective(image, shift @ inverse, tuple(extent))
-        cv.polylines(preview, [np.rint((mm-origin)*scale).astype(np.int32)], True, (0,0,255), 2)
+        cv.polylines(preview, [np.rint((ring-origin)*scale).astype(np.int32) for ring in rings], True, (0,0,255), 2)
         width, height = sorted(cv.minAreaRect(mm.astype(np.float32))[1])
     else:
         preview = cv.warpPerspective(image, inverse, (WIDTH_MM, HEIGHT_MM))
-        cv.polylines(preview, [np.rint(mm).astype(np.int32)], True, (0,0,255), 2)
+        cv.polylines(preview, [np.rint(ring).astype(np.int32) for ring in rings], True, (0,0,255), 2)
         width, height = np.ptp(mm, axis=0)
-    return Measurement(mm, float(polygon.area), float(width), float(height), residual, residual_mm, preview, quality)
+    return Measurement(pieces[0].contour_mm, float(sum(p.polygon.area for p in pieces)), float(width), float(height), residual, residual_mm, preview, quality, pieces)
