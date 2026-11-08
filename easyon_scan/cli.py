@@ -36,7 +36,7 @@ def main():
     from dataclasses import fields
     for field in fields(Parameters):
         p.add_argument("--" + field.name.replace("_", "-"),
-                       type=int if field.name == "jpeg_quality" else float,
+                       type=int if field.name in ("jpeg_quality", "annotations") else float,
                        default=field.default)
     args = parser.parse_args()
     try:

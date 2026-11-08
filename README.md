@@ -229,14 +229,14 @@ Degenerate homographies and extreme working hulls are rejected.
 
 Lens distortion is corrected only when a matching camera profile is supplied. Printer scaling, placement error, paper curl,
 shadows and poor contrast can dominate the error. Use the same plane for paper
-and markers. White tables and interior markings are not supported. Interior dark regions
+and markers. White tables and arbitrary interior markings are not supported. Unrecognized interior dark regions
 are exported as holes: the detector cannot distinguish a physical cutout from
-printed ink or a dark shadow. Do not use marked paper; inspect every hole in the
+printed ink or a dark shadow. Use only the annotation convention below; inspect every hole in the
 preview. Light objects may be indistinguishable from pattern pieces, and touching
 or overlapping pieces may appear as one outline. These cases cannot always be
 rejected from a single photo. Inspect the preview and independently check dimensions before use.
-Outer contours and holes are exported: **no notches, grain line, seam allowance,
-grading or AAMA/ASTM semantics**. Audaces compatibility has not been validated.
+Outer contours, holes and the annotation convention below are exported.
+**No seam allowance, grading or AAMA/ASTM semantics**. Audaces compatibility has not been validated.
 
 The detector uses AprilTag corner refinement followed by explicit subpixel
 refinement: local OpenCV 4.13/4.14 default ArUco refinement displaced the
@@ -249,7 +249,7 @@ applies to this project's code, not all third-party binary components.
 - Validate against measured real phone photographs and publish error distributions.
 - Validate camera profiles and quality-check thresholds on real devices.
 - Support custom marker sizes and persisted layouts.
-- Detect notches and grain lines; add AAMA/ASTM export.
+- Validate annotation recognition on real photos; add AAMA/ASTM export.
 - Add multi-photo stitching and broader lighting/contrast fixtures.
 
 ## Provenance and development
@@ -265,3 +265,31 @@ pytest -q
 ```
 
 See [LICENSE](LICENSE) for Apache License 2.0.
+
+## Notches and grain line (experimental)
+
+Draw solid black symbols on light paper, without touching other ink or holes.
+For a notch, draw a filled triangle with its 8 mm base on a straight paper edge
+and its tip 6 mm inward. Recognition permits bases 4–12 mm and depths 3–10 mm,
+with approximately centered tips and straight edge continuations. The edge is
+restored across the base, and the triangle exports as a closed polyline on NOTCH.
+A physical triangular cutout with the same geometry is indistinguishable from
+ink and receives the same interpretation. Avoid this convention for actual cuts.
+
+For grain, draw a filled double arrow: 2 mm shaft, 100 mm overall length,
+10 mm wide heads extending 8 mm from each tip. Keep it fully inside the piece.
+Recognition permits length 40–400 mm, width 6–16 mm, aspect ratio at least 5,
+and shaft thickness 0.6–3 mm, with wide heads at both ends. It exports its closed
+ink boundary (shaft and heads) on GRAIN, rather than a hole. Rotation is allowed.
+Other dark regions remain holes; ambiguous or malformed symbols can be missed
+or misclassified. Inspect every export; these heuristics have no real-photo validation.
+All layers use the same millimetre transform and preserve placement across pieces.
+Python Piece exposes notches_mm and grain_lines_mm; CLI JSON includes per-piece
+notch_count and grain_count. Synthetic Parameters(annotations=True) and CLI
+synthetic --annotations 1 enable two notches and a grain arrow before photo effects.
+The benchmark includes a notches and grain row; dimension error does not measure
+symbol recognition accuracy.
+
+For independent physical comparisons, use the bilingual
+[real-photo protocol](docs/real-photo-protocol.md) and scripts/real_photo_report.py.
+Real-photo accuracy remains unvalidated.

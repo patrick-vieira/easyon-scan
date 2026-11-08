@@ -16,6 +16,7 @@ otherwise repeat the same geometry. N is per profile, not total cases.
 | Defect | Accepted / total | Mean (mm) | p95 (mm) | Worst (mm) | Rejection rate |
 |---|---:|---:|---:|---:|---:|
 | clean | 3 / 3 | 0.260 | 0.260 | 0.260 | 0.0% |
+| notches and grain | 3 / 3 | 0.173 | 0.173 | 0.173 | 0.0% |
 | perspective | 3 / 3 | 0.444 | 0.444 | 0.444 | 0.0% |
 | radial distortion | 0 / 3 | N/A | N/A | N/A | 100.0% |
 | soft shadow | 3 / 3 | 0.334 | 0.334 | 0.334 | 0.0% |
@@ -31,6 +32,7 @@ otherwise repeat the same geometry. N is per profile, not total cases.
 | Defect | Checks disabled mean (mm) | With simulated lens profile mean (mm) |
 |---|---:|---:|
 | clean | 0.260 | N/A |
+| notches and grain | 0.173 | N/A |
 | perspective | 0.444 | N/A |
 | radial distortion | 56.826 | 1.827 |
 | soft shadow | 0.334 | N/A |
@@ -49,6 +51,8 @@ Lens profiles here use the analytic inverse-series approximation of the known sy
 Non-default parameters for each profile:
 
 - clean: defaults.
+  Warnings: No lens profile: distortion can escape marker checks. Calibrate this camera and avoid ultrawide lenses.; Verify every black square is 90 mm with a ruler. Uniform printer scaling cannot be detected from this photo.
+- notches and grain: annotations=True.
   Warnings: No lens profile: distortion can escape marker checks. Calibrate this camera and avoid ultrawide lenses.; Verify every black square is 90 mm with a ruler. Uniform printer scaling cannot be detected from this photo.
 - perspective: tilt_deg=25.
   Warnings: No lens profile: distortion can escape marker checks. Calibrate this camera and avoid ultrawide lenses.; Verify every black square is 90 mm with a ruler. Uniform printer scaling cannot be detected from this photo.

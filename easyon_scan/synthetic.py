@@ -73,6 +73,7 @@ def generate_free(out=None, tilt=0., seed=0, count=4):
 # Parameters describe an image formation model, not a calibrated phone camera.
 @dataclass(frozen=True)
 class Parameters:
+    annotations: bool = False
     tilt_deg: float = 0.
     radial_k1: float = 0.
     shadow: float = 0.
@@ -105,6 +106,9 @@ def generate_case(out=None, *, seed=0, parameters=None):
     p = parameters or Parameters()
     rng = np.random.default_rng(seed)
     image, truth = generate(perspective=False)
+    if p.annotations:
+        draw_annotations(image, 190, 190, 400, 600)
+        truth.update(notch_count=2, grain_count=1)
     # Reprint each entire card about its black-square centre.
     if p.printer_scale != 1:
         for x, y in ORIGINS.values():
@@ -212,3 +216,16 @@ def generate_pieces(*, perspective=False):
 
 if __name__ == "__main__":
     main()
+
+def draw_annotations(image, left, top, width, height):
+    """Two 8 x 6 mm edge triangles and a 100 x 10 mm double arrow."""
+    def fill(points):
+        cv.fillPoly(image, [np.rint((np.asarray(points)+[30, 30])*3).astype(np.int32)], (15,)*3)
+    x, y = left, top+height*.4
+    fill([[x,y-4],[x+6,y],[x,y+4]])
+    x = left+width
+    fill([[x,y-4],[x-6,y],[x,y+4]])
+    x, y = left+width/2, top+height/2
+    fill([[x,y-50],[x-5,y-42],[x-1,y-42],[x-1,y+42],
+          [x-5,y+42],[x,y+50],[x+5,y+42],[x+1,y+42],
+          [x+1,y-42],[x+5,y-42]])

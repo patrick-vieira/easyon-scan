@@ -1,5 +1,5 @@
 """Detect references and measure the light paper outline in source-image coordinates."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import cv2 as cv
 import numpy as np
 from PIL import Image, ImageOps
@@ -14,6 +14,8 @@ class ScanError(ValueError):
 class Piece:
     contour_mm: np.ndarray
     holes_mm: list
+    notches_mm: list = field(default_factory=list)
+    grain_lines_mm: list = field(default_factory=list)
 
     @property
     def polygon(self):
@@ -37,7 +39,9 @@ class Measurement:
                 ("area_mm2", "width_mm", "height_mm", "residual_px", "residual_mm", "quality_checks")}
         result["piece_count"] = len(self.pieces or [])
         result["pieces"] = [{"area_mm2": p.polygon.area,
-                             "hole_count": len(p.holes_mm)} for p in self.pieces or []]
+                             "hole_count": len(p.holes_mm),
+                             "notch_count": len(p.notches_mm),
+                             "grain_count": len(p.grain_lines_mm)} for p in self.pieces or []]
         return result
 
 
@@ -187,7 +191,9 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False):
 
     pieces = []
     for index in candidates:
-        outer = refine(index)
+        from .annotations import notches, grain
+        outer, notch_marks = notches(refine(index))
+        grain_marks = []
         if layout == "fixed" and min((outer[:,0]-x0).min(), (x1-outer[:,0]).min(),
                                       (outer[:,1]-y0).min(), (y1-outer[:,1]).min()) < 3:
             raise ScanError("Paper touches working area edge; leave at least 3 mm clearance")
@@ -196,9 +202,10 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False):
         while child != -1:
             if hierarchy[0, child, 2] != -1:
                 raise ScanError("Ambiguous nested outlines; remove light objects from holes")
-            holes.append(refine(child))
+            ring = refine(child)
+            (grain_marks if grain(ring) else holes).append(ring)
             child = hierarchy[0, child, 0]
-        piece = Piece(outer, holes)
+        piece = Piece(outer, holes, notch_marks, grain_marks)
         if not piece.polygon.is_valid or piece.polygon.area < 100:
             raise ScanError("Invalid or too small paper outline")
         pieces.append(piece)
