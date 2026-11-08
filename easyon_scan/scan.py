@@ -19,10 +19,11 @@ class Measurement:
     residual_px: float
     residual_mm: float
     preview: np.ndarray
+    quality_checks: list = None
 
     def summary(self):
         return {k: getattr(self, k) for k in
-                ("area_mm2", "width_mm", "height_mm", "residual_px", "residual_mm")}
+                ("area_mm2", "width_mm", "height_mm", "residual_px", "residual_mm", "quality_checks")}
 
 
 def load_photo(source):
@@ -49,12 +50,15 @@ def cruzamento(channel,points,level):
     return p
 
 
-def measure(source, layout="free"):
+def measure(source, layout="free", profile=None):
     if layout not in ("free", "fixed"):
         raise ValueError("Layout must be free or fixed")
     image = load_photo(source) if not isinstance(source, np.ndarray) else source
     if image is None or image.ndim != 3 or image.shape[2] != 3:
         raise ScanError("Expected a colour photograph")
+    if profile is not None:
+        from .lens import undistort
+        image = undistort(image, profile)
     gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
     params = cv.aruco.DetectorParameters()
     params.cornerRefinementMethod = cv.aruco.CORNER_REFINE_APRILTAG
@@ -69,12 +73,12 @@ def measure(source, layout="free"):
     photo = cv.cornerSubPix(gray, photo.reshape(-1, 1, 2), (5, 5), (-1, -1),
                             (cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 40, .001)).reshape(-1, 2).astype(float)
     try:
-        return _measure_calibrated(image, gray, photo, layout)
+        return _measure_calibrated(image, gray, photo, layout, profile is not None)
     except (np.linalg.LinAlgError, FloatingPointError) as exc:
         raise ScanError("Degenerate marker layout") from exc
 
 
-def _measure_calibrated(image, gray, photo, layout):
+def _measure_calibrated(image, gray, photo, layout, calibrated=False):
     if layout == "free":
         inverse, world, residual_mm = free_homography(photo)
         homography = np.linalg.inv(inverse)
@@ -108,6 +112,13 @@ def _measure_calibrated(image, gray, photo, layout):
     if (not np.isfinite(metric_roi).all() or not 1000 <= metric_area <= 100_000_000
             or np.max(np.ptp(metric_roi, axis=0)) > 100_000 or hull_area < 100):
         raise ScanError("Extreme working hull geometry; reposition markers and retake photo")
+    from .quality import checks
+    quality = checks(gray, photo, homography, residual_mm, calibrated)
+    rejected = [row for row in quality if row["status"] == "reject"]
+    if rejected:
+        error = ScanError("Photo quality: " + "; ".join(row["name"] + ": " + row["message"] for row in rejected))
+        error.checks = quality
+        raise error
     a = np.maximum(np.floor(roi.min(0)-3).astype(int), 0)
     b = np.minimum(np.ceil(roi.max(0)+3).astype(int), [gray.shape[1]-1, gray.shape[0]-1])
     crop = gray[a[1]:b[1]+1, a[0]:b[0]+1]
@@ -173,4 +184,4 @@ def _measure_calibrated(image, gray, photo, layout):
         preview = cv.warpPerspective(image, inverse, (WIDTH_MM, HEIGHT_MM))
         cv.polylines(preview, [np.rint(mm).astype(np.int32)], True, (0,0,255), 2)
         width, height = np.ptp(mm, axis=0)
-    return Measurement(mm, float(polygon.area), float(width), float(height), residual, residual_mm, preview)
+    return Measurement(mm, float(polygon.area), float(width), float(height), residual, residual_mm, preview, quality)

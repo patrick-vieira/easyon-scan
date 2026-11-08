@@ -69,11 +69,15 @@ def test_batch_cli(tmp_path, monkeypatch):
 def test_benchmark(tmp_path):
     from scripts.benchmark import benchmark, write_report
     rows = benchmark(count=1, profiles={'clean': Parameters(),
-                                      'printer scale': Parameters(printer_scale=.98)})
+                                      'printer scale': Parameters(printer_scale=.98),
+                                      'radial distortion': Parameters(radial_k1=.08)})
     assert rows[0]['accepted'] == 1
     assert rows[0]['worst_mm'] < 1
     assert rows[1]['accepted'] == 1
     assert rows[1]['mean_mm'] > 5
+    assert any('ruler' in warning for warning in rows[1]['warnings'])
+    assert rows[2]['accepted'] == 0
+    assert rows[2]['corrected_mm'] < rows[2]['before_mm']/10
     write_report(rows, tmp_path/'benchmark.md', 2026)
     report = (tmp_path/'benchmark.md').read_text()
     assert 'Rejection rate' in report and 'p95' in report

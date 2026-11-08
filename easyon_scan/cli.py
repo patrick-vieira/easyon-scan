@@ -19,9 +19,15 @@ def main():
     p.add_argument("photo")
     p.add_argument("--out", required=True)
     p.add_argument("--preview")
+    p.add_argument("--profile")
     commands.add_parser("web", help="Open local upload interface at 127.0.0.1:8765")
     for command in commands.choices.values():
         command.add_argument("--layout", choices=("free", "fixed"), default="free")
+    p = commands.add_parser("calibrate", help="Print a ChArUco board or calibrate a phone")
+    p.add_argument("photos", nargs="*")
+    p.add_argument("--board")
+    p.add_argument("--out")
+    p.add_argument("--phone", default="phone")
     p = commands.add_parser("synthetic", help="Generate synthetic cases and a metric manifest")
     p.add_argument("--out", required=True)
     p.add_argument("--count", type=int, default=10)
@@ -34,7 +40,18 @@ def main():
                        default=field.default)
     args = parser.parse_args()
     try:
-        if args.command == "synthetic":
+        if args.command == "calibrate":
+            from .lens import board_pdf, calibrate
+            from pathlib import Path
+            if args.board:
+                board_pdf(args.board)
+            if args.photos:
+                if not args.out:
+                    raise ValueError("Photos require --out profile.json")
+                Path(args.out).write_text(json.dumps(calibrate(args.photos, args.phone), indent=2))
+            elif not args.board:
+                raise ValueError("Specify --board or six photos and --out")
+        elif args.command == "synthetic":
             parameters = Parameters(**{f.name: getattr(args, f.name) for f in fields(Parameters)})
             generate_batch(args.out, count=args.count, seed=args.seed, parameters=parameters)
             print(f"Saved {args.count} cases and manifest.json to {args.out}")
@@ -42,7 +59,7 @@ def main():
             sheet(args.out, args.size, args.layout, args.id)
             print(f"Saved {args.out}. Print at 100%; cut and place as instructed.")
         elif args.command == "measure":
-            result = measure(args.photo, layout=args.layout)
+            result = measure(args.photo, layout=args.layout, profile=args.profile)
             export_dxf(result.contour_mm, args.out)
             if args.preview and not cv.imwrite(args.preview, result.preview):
                 raise OSError("Could not write preview")
@@ -53,4 +70,6 @@ def main():
             from .web import create_app
             create_app(layout=args.layout).run(host="127.0.0.1", port=8765, debug=False)
     except (ScanError, OSError, ValueError) as exc:
+        if args.command == "measure":
+            print(json.dumps({"error": str(exc), "quality_checks": getattr(exc, "checks", [])}))
         parser.exit(2, f"Error: {exc}\n")

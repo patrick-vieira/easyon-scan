@@ -62,6 +62,46 @@ the reference frame (origin at its first corner, y down). DXF uses millimetres,
 a closed LWPOLYLINE on OUTLINE, and y up with its origin at the outline's lower
 left. No marker pose is prescribed.
 
+### Camera calibration and photo quality
+
+```sh
+easyon-scan calibrate --board charuco-a4.pdf
+# Print at actual size, mount flat, and verify 30 mm squares with a ruler.
+# Take at least six sharp photos with varied tilts, distances and board positions.
+easyon-scan calibrate calibration/*.jpg --phone my-phone-main --out my-phone.json
+easyon-scan measure photo.jpg --profile my-phone.json --out pattern.dxf
+```
+
+The A4 board has 6 × 8 ChArUco squares (30 mm, markers 22 mm,
+DICT_4X4_50). Calibration requires at least 12 detected corners per view,
+varied frame coverage, matching oriented resolutions and RMS reprojection
+error at most 2 pixels. The versioned JSON stores the phone label, resolution,
+camera matrix, OpenCV distortion coefficients, view count and fit RMS. The fit
+uses two radial terms and tangential distortion (k3 fixed at zero).
+Use a separate profile per phone, lens, zoom and capture mode. Resolution
+mismatches are rejected; other capture-setting mismatches cannot be detected.
+EXIF orientation is applied before calibration and measurement. Correction
+runs before marker detection and contour extraction. Fit RMS is not a real
+measurement accuracy estimate.
+
+The web page accepts an optional profile JSON upload. CLI JSON and the page
+show quality checks and actionable hints. Checks run before contour measurement:
+minimum marker edge 35 px; minimum normalized marker Laplacian variance 100;
+marker white/black contrast at least 60 intensity levels; clipping fraction
+warning above 80%; paper/card illumination spread warning above 25% and rejection
+above 55%; homography local anisotropy rejection above 3; marker RMS warning
+above 1 mm and rejection above 2 mm. The homography ratio is a tilt proxy,
+not a camera angle. These are experimental heuristics, not validated safety
+or accuracy thresholds. Missing or undetectable markers can prevent checks.
+Rejected CLI measurements exit 2 and output JSON with the error and available
+checks; no DXF is exported. The web page displays rejection checks and hints.
+
+Without a profile, an explicit lens warning is always included: some distortion
+can escape consistency checks. Every result warns to physically verify 90 mm
+cards: uniform printer scaling is unobservable from the photo. Unequal scale,
+nonplanarity and distortion may raise marker residuals but cannot be uniquely
+identified. Passing checks never certifies scale or real-photo accuracy.
+
 ### Optional fixed layout
 
 Use `--layout fixed` with `sheet`, `measure` or `web` for the original layout.
@@ -170,7 +210,7 @@ with a request to remove light objects. No rectangular shape is required. Its in
 to mm. Rectification is used for preview only, capped at 4000 pixels per side.
 Degenerate homographies and extreme working hulls are rejected.
 
-Lens distortion is not corrected. Printer scaling, placement error, paper curl,
+Lens distortion is corrected only when a matching camera profile is supplied. Printer scaling, placement error, paper curl,
 shadows and poor contrast can dominate the error. Use the same plane for paper
 and markers. White tables, multiple pieces, holes and interior markings are not
 supported. Inspect the preview and independently check dimensions before use.
@@ -186,7 +226,7 @@ applies to this project's code, not all third-party binary components.
 ## Roadmap
 
 - Validate against measured real phone photographs and publish error distributions.
-- Add camera calibration / lens distortion correction and stronger quality checks.
+- Validate camera profiles and quality-check thresholds on real devices.
 - Support custom marker sizes and persisted layouts.
 - Detect notches and grain lines; add AAMA/ASTM export.
 - Add multi-photo stitching and broader lighting/contrast fixtures.
