@@ -65,9 +65,18 @@ def main():
     p.add_argument("--assume-units", choices=("mm", "cm", "in"))
     p.add_argument("--seam-allowance-mm", type=float)
     p.add_argument("--report")
+    p = commands.add_parser("propose", help="Suggest review-only seam pairs from assembly v0")
+    p.add_argument("file")
+    p.add_argument("--out", required=True)
     args = parser.parse_args()
     try:
-        if args.command == "assembly":
+        if args.command == "propose":
+            from pathlib import Path
+            from .propose import propose_assembly
+            result = propose_assembly(json.loads(Path(args.file).read_text(encoding="utf-8")))
+            Path(args.out).write_text(json.dumps(result, indent=2, allow_nan=False)+"\n", encoding="utf-8")
+            print(f"{len(result['proposals'])} proposals")
+        elif args.command == "assembly":
             from pathlib import Path
             from .assembly import dxf_to_assembly, validate_assembly
             assembly = dxf_to_assembly(args.file, size=args.size,
