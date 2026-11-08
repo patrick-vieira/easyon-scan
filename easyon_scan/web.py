@@ -24,9 +24,11 @@ button,a{padding:10px}img{width:100%;height:auto} .error{color:#a00}
 Keep the paper flat and all markers visible. Real photo accuracy is not yet validated.</p>
 <form method="post" enctype="multipart/form-data">
 <label>Phone photograph <input type="file" name="photo" accept="image/*" required></label>
+<label>Camera profile JSON <input type="file" name="profile" accept=".json"></label>
 <button>Measure</button></form>
 <p>Uploads are processed in memory and are not saved on the server. Maximum 25 MB / 40 MP.</p>
 {% if error %}<p class="error">{{error}}</p>{% endif %}
+{% for check in checks or [] %}<p>{{check.name}}: {{check.status}} ({{check.value}}). {{check.message}}</p>{% endfor %}
 {% if result %}<h2>{{'%.2f'|format(result.width_mm)}} × {{'%.2f'|format(result.height_mm)}} mm</h2>
 <p>Area: {{'%.1f'|format(result.area_mm2)}} mm².
 Marker residual: {{'%.2f'|format(result.residual_mm)}} mm.</p>
@@ -62,15 +64,17 @@ def create_app(layout="free"):
         if upload is None:
             return render_template_string(PAGE, error="Select a photograph"), 400
         try:
-            result = measure(upload.stream, layout=layout)
+            import json
+            profile = request.files.get("profile")
+            result = measure(upload.stream, layout=layout, profile=json.load(profile.stream) if profile and profile.filename else None)
             ok, png = cv.imencode(".png", result.preview)
             if not ok:
                 raise ScanError("Could not encode preview")
-            return render_template_string(PAGE, result=result,
+            return render_template_string(PAGE, result=result, checks=result.quality_checks,
                 preview=base64.b64encode(png).decode("ascii"),
                 dxf=base64.b64encode(dxf_bytes(result.contour_mm)).decode("ascii"))
-        except (ScanError, UnidentifiedImageError, OSError, ImageDecompressionError) as exc:
-            return render_template_string(PAGE, error=str(exc)), 400
+        except (ScanError, UnidentifiedImageError, OSError, ValueError, ImageDecompressionError) as exc:
+            return render_template_string(PAGE, error=str(exc), checks=getattr(exc, "checks", [])), 400
 
     return app
 

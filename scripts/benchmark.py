@@ -33,11 +33,32 @@ def benchmark(count=3, seed=2026, profiles=None):
         raise ValueError('count must be positive')
     results = []
     for name, parameters in (PROFILES if profiles is None else profiles).items():
-        errors, rejections = [], []
+        errors, rejections, raw_errors, warnings, corrected_errors = [], [], [], [], []
         for i in range(count):
             image, metadata = generate_case(seed=seed+i, parameters=parameters)
+            from unittest.mock import patch
+            truth = metadata.get('ground_truth', {})
+            try:
+                with patch('easyon_scan.quality.checks', return_value=[]):
+                    raw = measure(image, layout='free')
+                raw_errors.append(max(abs(raw.width_mm-truth['width_mm']), abs(raw.height_mm-truth['height_mm'])))
+            except ScanError:
+                pass
+            if parameters.radial_k1 and image is not None:
+                h, w = image.shape[:2]
+                radius = np.hypot(w, h)/2
+                k = parameters.radial_k1
+                profile = dict(schema_version=1, image_size=[w, h],
+                    camera_matrix=[[radius, 0, w/2], [0, radius, h/2], [0, 0, 1]],
+                    distortion=[-k, 3*k*k, 0, 0, -12*k**3])
+                try:
+                    corrected = measure(image, profile=profile)
+                    corrected_errors.append(max(abs(corrected.width_mm-400), abs(corrected.height_mm-600)))
+                except ScanError:
+                    pass
             try:
                 result = measure(image, layout='free')
+                warnings.extend(c['message'] for c in result.quality_checks if c['status'] == 'warn')
             except ScanError as exc:
                 rejections.append(str(exc))
                 continue
@@ -45,7 +66,9 @@ def benchmark(count=3, seed=2026, profiles=None):
             errors.append(max(abs(result.width_mm-truth['width_mm']),
                               abs(result.height_mm-truth['height_mm'])))
         results.append(dict(profile=name, parameters=asdict(parameters), count=count,
-                            accepted=len(errors), rejections=rejections,
+                            accepted=len(errors), rejections=rejections, warnings=sorted(set(warnings)),
+                            before_mm=float(np.mean(raw_errors)) if raw_errors else None,
+                            corrected_mm=float(np.mean(corrected_errors)) if corrected_errors else None,
                             mean_mm=float(np.mean(errors)) if errors else None,
                             p95_mm=float(np.percentile(errors, 95)) if errors else None,
                             worst_mm=float(max(errors)) if errors else None))
@@ -71,11 +94,18 @@ def write_report(results, out, seed):
                   for k in ('mean_mm', 'p95_mm', 'worst_mm')]
         lines.append(f'| {row["profile"]} | {row["accepted"]} / {row["count"]} | ' +
                      ' | '.join(values) + f' | {len(row["rejections"])/row["count"]:.1%} |')
+    lines += ['', '## Before / after', '', '| Defect | Checks disabled mean (mm) | With simulated lens profile mean (mm) |', '|---|---:|---:|']
+    for row in results:
+        fmt = lambda value: 'N/A' if value is None else f'{value:.3f}'
+        lines.append(f'| {row["profile"]} | {fmt(row["before_mm"])} | {fmt(row["corrected_mm"])} |')
+    lines += ['', 'Lens profiles here use the analytic inverse-series approximation of the known synthetic radial sampler; they are not fitted phone profiles. Other defects remain uncorrected. Uniform printer scaling is unobservable: accepted cases explicitly warn to verify every 90 mm square with a ruler.', '']
     lines += ['', '## Parameters', '', 'Non-default parameters for each profile:', '']
     defaults = asdict(Parameters())
     for row in results:
         changed = ', '.join(f'{k}={v}' for k, v in row['parameters'].items() if v != defaults[k])
         lines.append(f'- {row["profile"]}: {changed or "defaults"}.')
+        if row.get('warnings'):
+            lines.append('  Warnings: ' + '; '.join(row['warnings']))
         if row['rejections']:
             lines.append('  Rejections: ' + '; '.join(sorted(set(row['rejections']))))
     lines += ['', 'Reproduce from the repository root:', '', '```sh',

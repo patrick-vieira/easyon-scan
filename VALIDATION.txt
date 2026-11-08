@@ -111,3 +111,23 @@ Metric hull bounds: 1000–100000000 mm2; maximum span 100000 mm.
 No real-photo validation was performed.
 $ git diff --check
 Passed.
+
+SCAN-6 / SCAN-7 validation (2026-11-08)
+$ /data/Shopify/EonTeams/Hokage/palco/easyon-scan/.venv/bin/pytest -q
+56 passed in 30.38s.
+Additional benchmark regression assertion: 1 passed in 1.96s.
+No network access, package installation or git commands used.
+ChArUco calibration tested using ten rendered views with known OpenCV lens
+coefficients, then used to correct a separately rendered pattern photo.
+Known-profile correction must be below 1 mm and below one tenth of raw error;
+fitted-profile correction must improve error by at least fivefold.
+CLI rejection JSON, no DXF on rejection, web rejection checks, profile validation,
+blur rejection, marker size, exposure and tilt thresholds are exercised.
+A4 board PDF rendered with pdftoppm and visually inspected.
+$ /data/Shopify/EonTeams/Hokage/palco/easyon-scan/.venv/bin/python scripts/benchmark.py --count 3 --seed 2026
+Updated docs/benchmark.md: radial raw mean 56.826 mm, simulated-profile mean
+1.827 mm; without profile all three radial cases rejected. Uniform printer
+scale still produces 11.590 mm error and now explicitly warns to verify cards
+with a ruler. The benchmark profile is an analytic synthetic inverse-series
+approximation, not a profile estimated from real phone photos.
+Real-photo accuracy remains unvalidated. No commits or PR created.
