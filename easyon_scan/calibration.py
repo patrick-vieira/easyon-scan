@@ -9,17 +9,20 @@ def project(points, h):
     return cv.perspectiveTransform(np.asarray(points, float)[None], h)[0]
 
 
-def free_homography(photo):
+def free_homography(photo, sizes=None):
     """Fix the first marker as the coordinate gauge; jointly fit all corners.
 
     Five damped Gauss–Newton iterations optimize image→plane homography and
     the other markers' rigid poses. Residuals and damping are in millimetres.
     """
     groups = photo.reshape(-1, 4, 2)
-    h = cv.getPerspectiveTransform(groups[0].astype(np.float32), SQUARE.astype(np.float32))
+    from .layout import square
+    squares = [square(s) for s in (sizes if sizes is not None else [90.] * len(groups))]
+    first = squares[0]
+    h = cv.getPerspectiveTransform(groups[0].astype(np.float32), first.astype(np.float32))
     poses = []
-    centered = SQUARE - SQUARE.mean(0)
-    for points in groups[1:]:
+    for points, local in zip(groups[1:], squares[1:]):
+        centered = local - local.mean(0)
         mapped = project(points, h)
         u, _, vt = np.linalg.svd(centered.T @ (mapped - mapped.mean(0)))
         rotation = u @ vt
@@ -27,15 +30,15 @@ def free_homography(photo):
             u[:, -1] *= -1
             rotation = u @ vt
         angle = np.arctan2(rotation[0, 1], rotation[0, 0])
-        poses.extend([angle, *(mapped.mean(0) - SQUARE.mean(0) @ rotation)])
+        poses.extend([angle, *(mapped.mean(0) - local.mean(0) @ rotation)])
     state = np.r_[h.ravel()[:8] / h[2, 2], poses]
 
     def unpack(p):
         matrix = np.r_[p[:8], 1.].reshape(3, 3)
-        world = [SQUARE]
-        for angle, x, y in p[8:].reshape(-1, 3):
+        world = [first]
+        for local, (angle, x, y) in zip(squares[1:], p[8:].reshape(-1, 3)):
             c, s = np.cos(angle), np.sin(angle)
-            world.append(SQUARE @ np.array([[c, s], [-s, c]]) + [x, y])
+            world.append(local @ np.array([[c, s], [-s, c]]) + [x, y])
         return matrix, np.concatenate(world)
 
     def residual(p):

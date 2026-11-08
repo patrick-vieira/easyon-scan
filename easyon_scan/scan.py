@@ -35,6 +35,7 @@ class Measurement:
     preview: np.ndarray
     quality_checks: list = None
     pieces: list = None
+    markers: dict = None
 
     def summary(self):
         result = {k: getattr(self, k) for k in
@@ -71,9 +72,20 @@ def cruzamento(channel,points,level):
     return p
 
 
-def measure(source, layout="free", profile=None, *, quality_only=False):
+def measure(source, layout="free", profile=None, *, quality_only=False, marker_size=None, layout_file=None, save_layout=None):
     if layout not in ("free", "fixed"):
         raise ValueError("Layout must be free or fixed")
+    from .layout import marker_sizes, load_layout
+    sizes = marker_sizes(marker_size)
+    saved = load_layout(layout_file) if layout_file else None
+    if saved is not None:
+        if layout != "free":
+            raise ValueError("Saved layouts require free mode")
+        for k, size in sizes.items():
+            if k in saved and not np.isclose(np.linalg.norm(saved[k][1]-saved[k][0]), size):
+                raise ValueError("Declared marker size conflicts with saved layout")
+    if layout == "fixed" and sizes:
+        raise ValueError("Custom sizes require free layout")
     image = load_photo(source) if not isinstance(source, np.ndarray) else source
     if image is None or image.ndim != 3 or image.shape[2] != 3:
         raise ScanError("Expected a colour photograph")
@@ -90,21 +102,31 @@ def measure(source, layout="free", profile=None, *, quality_only=False):
     if len(found) != len(ids):
         raise ScanError("Duplicate marker IDs")
     selected = sorted(found) if layout == "free" else list(range(4))
+    if saved is not None and any(i not in saved for i in selected):
+        raise ScanError("Detected marker missing from saved layout")
     photo = np.concatenate([found[i] for i in selected]).astype(np.float32)
     photo = cv.cornerSubPix(gray, photo.reshape(-1, 1, 2), (5, 5), (-1, -1),
                             (cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 40, .001)).reshape(-1, 2).astype(float)
     try:
-        return _measure_calibrated(image, gray, photo, layout, profile is not None, quality_only)
+        known = np.concatenate([saved[i] for i in selected]) if saved is not None else None
+        result = _measure_calibrated(image, gray, photo, layout, profile is not None, quality_only,
+                                     [sizes.get(i, 90.) for i in selected] if sizes else None, known)
+        if not quality_only:
+            result.markers = dict(zip(selected, result.markers.reshape(-1, 4, 2)))
+            if save_layout:
+                from .layout import save_layout as write_layout
+                write_layout(save_layout, result.markers)
+        return result
     except (np.linalg.LinAlgError, FloatingPointError) as exc:
         raise ScanError("Degenerate marker layout") from exc
 
 
-def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_only=False):
-    if layout == "free":
-        inverse, world, residual_mm = free_homography(photo)
+def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_only=False, sizes=None, known=None):
+    if layout == "free" and known is None:
+        inverse, world, residual_mm = free_homography(photo) if sizes is None else free_homography(photo, sizes)
         homography = np.linalg.inv(inverse)
     else:
-        world = np.concatenate([corners_mm(i) for i in range(4)])
+        world = known if known is not None else np.concatenate([corners_mm(i) for i in range(4)])
         homography, _ = cv.findHomography(world, photo, 0)
         if homography is None:
             raise ScanError("Degenerate marker layout")
@@ -232,4 +254,4 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_on
         preview = cv.warpPerspective(image, inverse, (WIDTH_MM, HEIGHT_MM))
         cv.polylines(preview, [np.rint(ring).astype(np.int32) for ring in rings], True, (0,0,255), 2)
         width, height = np.ptp(mm, axis=0)
-    return Measurement(pieces[0].contour_mm, float(sum(p.polygon.area for p in pieces)), float(width), float(height), residual, residual_mm, preview, quality, pieces)
+    return Measurement(pieces[0].contour_mm, float(sum(p.polygon.area for p in pieces)), float(width), float(height), residual, residual_mm, preview, quality, pieces, world)

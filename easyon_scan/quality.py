@@ -41,8 +41,8 @@ def checks(gray, photo, homography, residual_mm, calibrated):
     singular = np.linalg.svd((p[1:]-p[0]).T, compute_uv=False)
     ratio = singular[0]/singular[1]
     add('plane_tilt_proxy', ratio, 'reject' if ratio > 3 else 'pass', 'Photograph more directly overhead; strong foreshortening reduces reliability.')
-    add('marker_consistency_mm', residual_mm, 'reject' if residual_mm > 2 else ('warn' if residual_mm > 1 else 'pass'), 'Possible lens distortion or inconsistent marker scale: use a camera profile, verify 90 mm cards and keep them coplanar.')
-    add('scale_verification', 0, 'warn', 'Verify every black square is 90 mm with a ruler. Uniform printer scaling cannot be detected from this photo.')
+    add('marker_consistency_mm', residual_mm, 'reject' if residual_mm > 2 else ('warn' if residual_mm > 1 else 'pass'), 'Possible lens distortion or inconsistent marker scale: use a camera profile, verify declared card sizes and keep them coplanar.')
+    add('scale_verification', 0, 'warn', 'Verify every black square matches its declared size with a ruler. Uniform printer scaling cannot be detected from this photo.')
     if not calibrated:
         add('lens_profile', 0, 'warn', 'No lens profile: distortion can escape marker checks. Calibrate this camera and avoid ultrawide lenses.')
     return rows

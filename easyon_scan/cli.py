@@ -16,7 +16,9 @@ def main():
     p.add_argument("--size", choices=("a4", "a3"), default="a4")
     p.add_argument("--out", required=True)
     p = commands.add_parser("measure", help="Measure a phone photograph")
-    p.add_argument("photo")
+    p.add_argument("photo", nargs="+")
+    p.add_argument("--layout-file")
+    p.add_argument("--save-layout")
     p.add_argument("--out", required=True)
     p.add_argument("--preview")
     p.add_argument("--dxf-mode", choices=("plain", "aama"), default="plain")
@@ -25,6 +27,8 @@ def main():
     commands.add_parser("web", help="Open local upload interface at 127.0.0.1:8765")
     for command in commands.choices.values():
         command.add_argument("--layout", choices=("free", "fixed"), default="free")
+    for name in ("sheet", "measure"):
+        commands.choices[name].add_argument("--marker-size", help="Black-square sizes in mm: 0=90,1=60")
     p = commands.add_parser("calibrate", help="Print a ChArUco board or calibrate a phone")
     p.add_argument("photos", nargs="*")
     p.add_argument("--board")
@@ -58,10 +62,17 @@ def main():
             generate_batch(args.out, count=args.count, seed=args.seed, parameters=parameters)
             print(f"Saved {args.count} cases and manifest.json to {args.out}")
         elif args.command == "sheet":
-            sheet(args.out, args.size, args.layout, args.id)
+            sheet(args.out, args.size, args.layout, args.id, marker_size=args.marker_size)
             print(f"Saved {args.out}. Print at 100%; cut and place as instructed.")
         elif args.command == "measure":
-            result = measure(args.photo, layout=args.layout, profile=args.profile)
+            options = dict(profile=args.profile, marker_size=args.marker_size, layout_file=args.layout_file, save_layout=args.save_layout)
+            if len(args.photo) > 1:
+                if args.layout != "free":
+                    raise ValueError("Stitching requires free layout")
+                from .stitch import stitch
+                result = stitch(args.photo, **options)
+            else:
+                result = measure(args.photo[0], layout=args.layout, **options)
             export_dxf(result, args.out, mode=args.dxf_mode, size=args.size)
             if args.preview and not cv.imwrite(args.preview, result.preview):
                 raise OSError("Could not write preview")
