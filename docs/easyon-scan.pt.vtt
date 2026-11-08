@@ -1,0 +1,38 @@
+WEBVTT
+
+00:00:00.400 --> 00:00:05.912
+Pequenos ateliês ainda copiam moldes de papel à mão, ou pagam por uma mesa digitalizadora.
+
+00:00:06.733 --> 00:00:15.641
+O easyon-scan precisa de uma foto do celular com cartões de marcadores impressos ao redor do molde, e devolve um contorno DXF fechado em milímetros.
+
+00:00:16.467 --> 00:00:19.893
+Novo: calibração da lente e verificação da qualidade da foto.
+
+00:00:19.893 --> 00:00:24.486
+Uma foto distorcida ou tremida é rejeitada, e não medida em silêncio.
+
+00:00:25.300 --> 00:00:29.924
+Várias peças com furos numa só foto, mais piques e fio.
+
+00:00:30.733 --> 00:00:36.245
+Uma exportação experimental no estilo AAMA e ASTM.
+
+00:00:37.067 --> 00:00:41.560
+A captura guiada verifica marcadores, nitidez e inclinação antes de fotografar.
+
+00:00:42.367 --> 00:00:45.606
+E moldes grandes podem ser juntados a partir de várias fotos.
+
+00:00:46.433 --> 00:00:49.946
+Todos os números aqui vêm de fotos sintéticas.
+
+00:00:49.946 --> 00:00:53.382
+A precisão em fotos reais ainda não está validada.
+
+00:00:54.200 --> 00:00:55.552
+Experimente em cinco minutos.
+
+00:00:55.552 --> 00:00:56.551
+É código aberto.
+
