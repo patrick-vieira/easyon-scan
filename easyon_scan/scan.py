@@ -37,9 +37,14 @@ class Measurement:
     pieces: list = None
     markers: dict = None
 
+    reference: str = "aruco"
+    estimated_accuracy_class: str = "aruco-experimental"
+    warnings: list = field(default_factory=list)
+
     def summary(self):
         result = {k: getattr(self, k) for k in
                 ("area_mm2", "width_mm", "height_mm", "residual_px", "residual_mm", "quality_checks")}
+        result.update(reference=self.reference, estimated_accuracy_class=self.estimated_accuracy_class, warnings=self.warnings or [r["message"] for r in self.quality_checks or [] if r["status"] == "warn"])
         result["piece_count"] = len(self.pieces or [])
         result["pieces"] = [{"area_mm2": p.polygon.area,
                              "hole_count": len(p.holes_mm),
@@ -72,9 +77,11 @@ def cruzamento(channel,points,level):
     return p
 
 
-def measure(source, layout="free", profile=None, *, quality_only=False, marker_size=None, layout_file=None, save_layout=None):
+def measure(source, layout="free", profile=None, *, quality_only=False, marker_size=None, layout_file=None, save_layout=None, reference=None, reference_frontal=False):
     if layout not in ("free", "fixed"):
         raise ValueError("Layout must be free or fixed")
+    if reference and (layout != "free" or marker_size or layout_file or save_layout):
+        raise ValueError("References require free single-photo mode without marker layout options")
     from .layout import marker_sizes, load_layout
     sizes = marker_sizes(marker_size)
     saved = load_layout(layout_file) if layout_file else None
@@ -93,6 +100,19 @@ def measure(source, layout="free", profile=None, *, quality_only=False, marker_s
         from .lens import undistort
         image = undistort(image, profile)
     gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+    if reference:
+        from .references import detect, get_reference
+        inverse, corners, warnings = detect(gray, reference, reference_frontal)
+        if profile is None:
+            warnings.append("No lens profile: uncorrected lens distortion may affect dimensions.")
+        result = _measure_calibrated(image, gray, corners, "free", profile is not None, quality_only, reference_data=(inverse, warnings))
+        if not quality_only:
+            result.reference = reference
+            result.estimated_accuracy_class = get_reference(reference).accuracy
+            result.warnings = warnings
+            result.residual_mm = result.residual_px = None
+            result.markers = {}
+        return result
     params = cv.aruco.DetectorParameters()
     params.cornerRefinementMethod = cv.aruco.CORNER_REFINE_APRILTAG
     corners, ids, _ = cv.aruco.ArucoDetector(dictionary(), params).detectMarkers(gray)
@@ -121,8 +141,13 @@ def measure(source, layout="free", profile=None, *, quality_only=False, marker_s
         raise ScanError("Degenerate marker layout") from exc
 
 
-def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_only=False, sizes=None, known=None):
-    if layout == "free" and known is None:
+def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_only=False, sizes=None, known=None, reference_data=None):
+    if reference_data is not None:
+        inverse, warnings = reference_data
+        homography = np.linalg.inv(inverse)
+        world = project(photo, inverse)
+        residual_mm = 0.
+    elif layout == "free" and known is None:
         inverse, world, residual_mm = free_homography(photo) if sizes is None else free_homography(photo, sizes)
         homography = np.linalg.inv(inverse)
     else:
@@ -142,6 +167,9 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_on
             raise ScanError("Central working area is outside the photo")
     else:
         roi = cv.convexHull(photo.astype(np.float32)).reshape(-1, 2)
+    if reference_data is not None:
+        h, w = gray.shape
+        roi = np.float32([[0,0],[w-1,0],[w-1,h-1],[0,h-1]])
     # A projective horizon must not cross the working hull. Check before
     # perspectiveTransform (which maps zero denominators to zero).
     denominators = np.c_[roi, np.ones(len(roi))] @ inverse[2]
@@ -156,7 +184,7 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_on
             or np.max(np.ptp(metric_roi, axis=0)) > 100_000 or hull_area < 100):
         raise ScanError("Extreme working hull geometry; reposition markers and retake photo")
     from .quality import checks
-    quality = checks(gray, photo, homography, residual_mm, calibrated)
+    quality = checks(gray, photo, homography, residual_mm, calibrated) if reference_data is None else [dict(name="reference", status="warn", value=None, message=w) for w in warnings]
     if quality_only:
         return quality
     rejected = [row for row in quality if row["status"] == "reject"]
@@ -171,7 +199,7 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_on
     cv.fillConvexPoly(valid, np.rint(roi-a).astype(np.int32), 255)
     if layout == "free":
         for marker in photo.reshape(-1, 4, 2):
-            expanded = marker.mean(0) + (marker-marker.mean(0))*1.25
+            expanded = marker.mean(0) + (marker-marker.mean(0))*(1.03 if reference_data is not None else 1.25)
             cv.fillConvexPoly(valid, np.rint(expanded-a).astype(np.int32), 0)
     values = crop[valid > 0]
     otsu, _ = cv.threshold(values, 0, 255, cv.THRESH_BINARY+cv.THRESH_OTSU)

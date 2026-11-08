@@ -91,3 +91,25 @@ Disconnected overlap, only one shared marker and a moved shared card are rejecte
 These fixtures do not extend the benchmark statistics or establish accuracy on
 real photographs. Stitching extracts contours from a 1 pixel/mm light-paper union
 mosaic, so its edge sampling differs from the single-photo benchmark.
+## No-printer references (SCAN-14)
+
+Two deterministic 3 px/mm cases per reference: frontal and projective.
+BIC repeats the frontal case: it has no perspective correction.
+Ideal rounded light body silhouettes; 180 × 260 mm pattern to the right.
+Small-reference extrapolation amplifies rasterization/side-fitting errors.
+These cases do not model real phone bezel contrast or validate real-photo accuracy.
+ArUco remains the most accurate option. Qualitative classes are not accuracy guarantees.
+
+| Reference | Accepted / total | Mean (mm) | p95 (mm) | Worst (mm) |
+|---|---:|---:|---:|---:|
+| a4 | 2 / 2 | 0.276 | 0.290 | 0.291 |
+| letter | 2 / 2 | 0.344 | 0.359 | 0.361 |
+| card | 2 / 2 | 6.681 | 11.605 | 12.153 |
+| phone:iphone-15 | 2 / 2 | 2.172 | 3.226 | 3.344 |
+| phone:iphone-15-pro | 2 / 2 | 0.807 | 0.993 | 1.014 |
+| phone:galaxy-s24 | 2 / 2 | 1.041 | 1.065 | 1.068 |
+| phone:edge-50-fusion | 2 / 2 | 6.747 | 12.209 | 12.816 |
+| bic | 2 / 2 | 1.053 | 1.053 | 1.053 |
+
+Reproduce: python scripts/benchmark_references.py (prints this section).
+

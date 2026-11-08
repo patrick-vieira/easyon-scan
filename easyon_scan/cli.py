@@ -21,6 +21,8 @@ def main():
     p.add_argument("--save-layout")
     p.add_argument("--out", required=True)
     p.add_argument("--preview")
+    p.add_argument("--reference")
+    p.add_argument("--reference-frontal", action="store_true")
     p.add_argument("--dxf-mode", choices=("plain", "aama"), default="plain")
     p.add_argument("--size", default="BASE", help="Size label for AAMA-style DXF")
     p.add_argument("--profile")
@@ -66,18 +68,20 @@ def main():
             print(f"Saved {args.out}. Print at 100%; cut and place as instructed.")
         elif args.command == "measure":
             options = dict(profile=args.profile, marker_size=args.marker_size, layout_file=args.layout_file, save_layout=args.save_layout)
+            if args.reference and len(args.photo) > 1:
+                raise ValueError("References support one photo only")
             if len(args.photo) > 1:
                 if args.layout != "free":
                     raise ValueError("Stitching requires free layout")
                 from .stitch import stitch
                 result = stitch(args.photo, **options)
             else:
-                result = measure(args.photo[0], layout=args.layout, **options)
+                result = measure(args.photo[0], layout=args.layout, reference=args.reference, reference_frontal=args.reference_frontal, **options)
             export_dxf(result, args.out, mode=args.dxf_mode, size=args.size)
             if args.preview and not cv.imwrite(args.preview, result.preview):
                 raise OSError("Could not write preview")
             print(json.dumps(result.summary(), indent=2))
-            if result.residual_mm > 1:
+            if result.residual_mm is not None and result.residual_mm > 1:
                 print("Warning: marker residual exceeds 1 mm; inspect placement and photo.", file=sys.stderr)
         else:
             from .web import create_app

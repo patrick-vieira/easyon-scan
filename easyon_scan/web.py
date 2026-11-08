@@ -1,44 +1,236 @@
-"""Local, stateless upload UI. Images and exports live only in request memory."""
+"""Local, stateless UI. Uploads and exports remain in request memory."""
 import base64
 from io import BytesIO
+from pathlib import Path
 import cv2 as cv
-from flask import Flask, Request, request, render_template_string, jsonify
+from flask import Flask, Request, request, render_template, jsonify, send_from_directory
+from werkzeug.datastructures import ImmutableMultiDict
 from PIL import UnidentifiedImageError
+from PIL.Image import DecompressionBombError as ImageDecompressionError
 from .scan import measure, ScanError, load_photo
 from .dxf import dxf_bytes
+from .references import CATALOGUE
 
+STRINGS = {'pt': {'lang': 'pt-BR',
+        'language': 'Idioma',
+        'skip': 'Ir para o conteúdo',
+        'tagline': 'Do papel ao molde digital',
+        'intro': 'Prepare a mesa, fotografe e baixe seu molde em DXF.',
+        'reference': 'Escolha a referência',
+        'reference_tip': 'Sem marcadores? Coloque o objeto à esquerda, em pé, separado do molde '
+                         'por um espaço escuro. Todos devem estar no mesmo plano. Confira as '
+                         'dimensões com uma régua.',
+        'aruco': 'Marcadores ArUco',
+        'aruco_tip': 'Melhor opção · precisão em fotos reais ainda não validada. Use pelo menos '
+                     'quatro marcadores distintos de 90 mm.',
+        'a4': 'Folha A4',
+        'letter': 'Folha Letter',
+        'card': 'Cartão bancário',
+        'phone': 'Celular sem capa',
+        'bic': 'Isqueiro BIC J26',
+        'sheet_accuracy': 'Estimativa experimental · confira o tamanho da folha.',
+        'small_accuracy': 'Estimativa experimental · o erro aumenta longe da referência.',
+        'bic_accuracy': 'Apenas escala aproximada · sem correção de perspectiva.',
+        'model': 'Modelo do celular',
+        'frontal': 'Confirmo que a foto foi feita de frente, com a câmera diretamente acima '
+                   '(obrigatório para BIC).',
+        'tips': 'Prepare uma boa foto',
+        'tips_text': 'Mesa escura, papel claro e bem plano. Fotografe diretamente de cima, com luz '
+                     'uniforme, sem sombras ou reflexos. Deixe todas as bordas visíveis.',
+        'fixed': 'Layout fixo: use os marcadores 0–3 na montagem de 780 × 980 mm.',
+        'upload': 'Envie sua foto',
+        'photo': 'Fotografia do molde',
+        'capture': 'Capturar com a câmera',
+        'measure': 'Medir molde',
+        'privacy': 'As imagens são processadas na memória e não são salvas no servidor. Limite: 25 '
+                   'MB / 40 MP.',
+        'advanced': 'Opções avançadas',
+        'profile': 'Perfil da câmera (JSON)',
+        'mode': 'Formato DXF',
+        'plain': 'Padrão',
+        'aama': 'AAMA/ASTM (experimental)',
+        'size': 'Tamanho',
+        'result': 'Seu molde digital',
+        'preview': 'Prévia retificada com contornos medidos em vermelho',
+        'pieces': 'Peças',
+        'area': 'Área líquida total',
+        'download': 'Baixar DXF',
+        'warnings': 'Antes de usar o molde',
+        'verify': 'Confira as medidas com uma régua antes de cortar. A precisão em fotos reais '
+                  'ainda não foi validada.',
+        'how': 'Como funciona',
+        'video_fallback': 'Baixar vídeo explicativo',
+        'pt_captions': 'Português (Brasil)',
+        'en_captions': 'Inglês',
+        'back': 'Voltar ao envio de foto',
+        'camera_help': 'A câmera precisa de HTTPS ou localhost. No celular, um endereço HTTP da '
+                       'rede local geralmente não permite acesso: use o envio de foto ou HTTPS '
+                       'local confiável. As prévias vão apenas para este servidor local.',
+        'camera_caution': 'As verificações da prévia são experimentais. Um resultado aprovado não '
+                          'garante precisão; a medição usa a foto completa.',
+        'start': 'Iniciar câmera',
+        'stop': 'Parar câmera',
+        'shoot': 'Fotografar e medir',
+        'stopped': 'Câmera parada',
+        'waiting': 'Aguardando prévia da câmera',
+        'ready': 'Pronto para fotografar',
+        'adjust': 'Ajuste a câmera. ',
+        'adjust_tip': 'Mantenha o celular firme, de cima, com a referência inteira visível.',
+        'unavailable': 'Prévia indisponível',
+        'camera_error': 'Não foi possível usar a câmera. Verifique a permissão e HTTPS/localhost '
+                        'ou envie uma foto.',
+        'photo_error': 'Foto grande demais ou indisponível. Use o envio de foto.',
+        'measuring': 'Medindo a foto em resolução completa…',
+        'markers': 'Referência',
+        'sharpness': 'Nitidez',
+        'tilt': 'Inclinação',
+        'pass': 'Bom',
+        'reject': 'Ajustar',
+        'warn': 'Atenção',
+        'unknown': 'Aguardando',
+        'missing': 'Selecione uma fotografia.',
+        'large': 'O envio ultrapassa 25 MB. Escolha uma foto menor.',
+        'error': 'Não foi possível medir. Confira a referência, deixe o papel separado sobre uma '
+                 'mesa escura e tente uma foto mais nítida, diretamente de cima. Verifique também '
+                 'o perfil JSON, se enviado.',
+        'warning_reference': 'Referência experimental: mantenha objeto e molde planos. Objetos '
+                             'pequenos e distantes podem aumentar o erro.',
+        'warning_lens': 'Sem perfil da câmera, a lente pode distorcer as medidas. Evite a lente '
+                        'ultrawide.',
+        'warning_scale': 'Confira com régua o tamanho impresso de todos os marcadores; a foto não '
+                         'detecta uma impressão fora de escala.',
+        'warning_quality': 'Revise a luz, o foco e a posição da câmera. Sombras, reflexos e '
+                           'inclinação podem alterar as medidas.',
+        'warning_phone': 'Retire a capa e use o contorno do corpo, não o da tela. A tela deve '
+                         'ficar branca até as bordas; telas curvas podem impedir a detecção.',
+        'warning_bic': 'BIC: escala apenas aproximada, sem correção de perspectiva. Use uma foto '
+                       'diretamente de cima.',
+        'preview_large': 'A prévia deve ter até 500 KB e 1280 pixels por lado.'},
+ 'en': {'lang': 'en',
+        'language': 'Language',
+        'skip': 'Skip to content',
+        'tagline': 'From paper to digital pattern',
+        'intro': 'Prepare your table, take a photo and download your DXF pattern.',
+        'reference': 'Choose a reference',
+        'reference_tip': 'No markers? Place the object on the left, in portrait orientation, with '
+                         'a dark gap before the pattern. Keep everything on the same plane. Verify '
+                         'dimensions with a ruler.',
+        'aruco': 'ArUco markers',
+        'aruco_tip': 'Best option · real-photo accuracy is not yet validated. Use at least four '
+                     'distinct 90 mm markers.',
+        'a4': 'A4 sheet',
+        'letter': 'Letter sheet',
+        'card': 'Bank card',
+        'phone': 'Phone without case',
+        'bic': 'BIC J26 lighter',
+        'sheet_accuracy': 'Experimental estimate · verify sheet dimensions.',
+        'small_accuracy': 'Experimental estimate · error increases farther from the reference.',
+        'bic_accuracy': 'Approximate scale only · no perspective correction.',
+        'model': 'Phone model',
+        'frontal': 'I confirm the photo is frontal, with the camera directly overhead (required '
+                   'for BIC).',
+        'tips': 'Prepare a good photo',
+        'tips_text': 'Dark table, light paper lying flat. Photograph directly overhead with even '
+                     'light, no shadows or glare. Keep all edges visible.',
+        'fixed': 'Fixed layout: use markers 0–3 in the assembled 780 × 980 mm layout.',
+        'upload': 'Upload your photo',
+        'photo': 'Pattern photograph',
+        'capture': 'Capture with camera',
+        'measure': 'Measure pattern',
+        'privacy': 'Images are processed in memory and are not saved on the server. Limit: 25 MB / '
+                   '40 MP.',
+        'advanced': 'Advanced options',
+        'profile': 'Camera profile (JSON)',
+        'mode': 'DXF mode',
+        'plain': 'Plain',
+        'aama': 'AAMA/ASTM (experimental)',
+        'size': 'Size',
+        'result': 'Your digital pattern',
+        'preview': 'Rectified preview with measured outlines in red',
+        'pieces': 'Pieces',
+        'area': 'Total net area',
+        'download': 'Download DXF',
+        'warnings': 'Before using the pattern',
+        'verify': 'Check dimensions with a ruler before cutting. Real-photo accuracy has not yet '
+                  'been validated.',
+        'how': 'How it works',
+        'video_fallback': 'Download explainer video',
+        'pt_captions': 'Portuguese (Brazil)',
+        'en_captions': 'English',
+        'back': 'Back to photo upload',
+        'camera_help': 'Camera access requires HTTPS or localhost. On a phone, a local network '
+                       'HTTP address usually blocks camera access: use photo upload or trusted '
+                       'local HTTPS. Previews go only to this local server.',
+        'camera_caution': 'Preview checks are experimental. Passing does not guarantee accuracy; '
+                          'measurement uses the full photo.',
+        'start': 'Start camera',
+        'stop': 'Stop camera',
+        'shoot': 'Take photo and measure',
+        'stopped': 'Camera stopped',
+        'waiting': 'Waiting for camera preview',
+        'ready': 'Ready to capture',
+        'adjust': 'Adjust the camera. ',
+        'adjust_tip': 'Hold steady, directly overhead, with the entire reference visible.',
+        'unavailable': 'Preview unavailable',
+        'camera_error': 'Could not use the camera. Check permissions and HTTPS/localhost or upload '
+                        'a photo.',
+        'photo_error': 'Photo too large or unavailable. Use photo upload.',
+        'measuring': 'Measuring full-resolution photo…',
+        'markers': 'Reference',
+        'sharpness': 'Sharpness',
+        'tilt': 'Tilt',
+        'pass': 'Good',
+        'reject': 'Adjust',
+        'warn': 'Caution',
+        'unknown': 'Waiting',
+        'missing': 'Select a photograph.',
+        'large': 'Upload exceeds 25 MB. Choose a smaller photo.',
+        'error': 'Could not measure. Check the reference, separate the paper on a dark table and '
+                 'try a sharper photo directly overhead. Also check the JSON profile if supplied.',
+        'warning_reference': 'Experimental reference: keep object and pattern flat. Small and '
+                             'distant objects can increase error.',
+        'warning_lens': 'Without a camera profile, lens distortion can affect dimensions. Avoid '
+                        'ultrawide lenses.',
+        'warning_scale': 'Check the printed size of every marker with a ruler; a photo cannot '
+                         'detect uniform print scaling.',
+        'warning_quality': 'Review lighting, focus and camera position. Shadows, glare and tilt '
+                           'can affect measurements.',
+        'warning_phone': 'Remove the case and use the body outline, not the screen. Show white to '
+                         'the body edges; curved screens may prevent detection.',
+        'warning_bic': 'BIC: approximate scale only, without perspective correction. Use a photo '
+                       'directly overhead.',
+        'preview_large': 'Preview must be at most 500 KB and 1280 pixels per side.'}}
 
 class MemoryRequest(Request):
     def _get_file_stream(self, total_content_length, content_type, filename=None, content_length=None):
         return BytesIO()
 
 
-PAGE = """<!doctype html><html lang="en"><meta charset="utf-8">
-<title>EasyON Scan</title><style>
-body{font:18px system-ui;max-width:900px;margin:40px auto;padding:0 20px;background:#f4f5f6}
-button,a{padding:10px}img{width:100%;height:auto} .error{color:#a00}
-</style><h1>EasyON Scan</h1>
-<p>Place light paper on a dark table,
-{% if layout == "fixed" %}inside the assembled 780 × 980 mm four-marker layout.
-{% else %}surrounded by four or more freely placed 90 mm markers.{% endif %}
-Keep the paper flat and all markers visible. Real photo accuracy is not yet validated.</p>
-<p><a href="/capture">Capture with camera</a></p>
-<form method="post" enctype="multipart/form-data">
-<label>Phone photograph <input type="file" name="photo" accept="image/*" required></label>
-<label>Camera profile JSON <input type="file" name="profile" accept=".json"></label>
-<label>DXF mode <select name="dxf_mode"><option value="plain">Plain (default)</option><option value="aama">AAMA/ASTM style (experimental)</option></select></label>
-<label>Size <input name="size" value="BASE" maxlength="80"></label>
-<button>Measure</button></form>
-<p>Uploads are processed in memory and are not saved on the server. Maximum 25 MB / 40 MP.</p>
-{% if error %}<p class="error">{{error}}</p>{% endif %}
-{% for check in checks or [] %}<p>{{check.name}}: {{check.status}} ({{check.value}}). {{check.message}}</p>{% endfor %}
-{% if result %}<h2>{{'%.2f'|format(result.width_mm)}} × {{'%.2f'|format(result.height_mm)}} mm</h2>
-<p>Pieces: {{result.pieces|length}}. Total net area: {{'%.1f'|format(result.area_mm2)}} mm².
-Marker residual: {{'%.2f'|format(result.residual_mm)}} mm.</p>
-{% if result.residual_mm > 1 %}<p class="error">Marker residual exceeds 1 mm. Inspect placement and photo.</p>{% endif %}
-<img alt="Rectified table with red measured outline" src="data:image/png;base64,{{preview}}">
-<p><a download="pattern.dxf" href="data:application/dxf;base64,{{dxf}}">Download DXF</a></p>
-{% endif %}</html>"""
+def chosen_reference():
+    choice = request.values.get("reference_choice")
+    if choice is None:
+        return request.values.get("reference", "")
+    return request.values.get("phone_model", "phone:iphone-15") if choice == "phone" else choice
+
+
+def tr(key):
+    return STRINGS.get(request.values.get("lang"), STRINGS["pt"])[key]
+
+
+def warnings_for(result):
+    keys = ["verify"]
+    if result.reference and result.reference != "aruco":
+        keys.append("warning_reference")
+    if result.reference == "bic":
+        keys.append("warning_bic")
+    if result.reference and result.reference.startswith("phone:"):
+        keys.append("warning_phone")
+    for row in result.quality_checks or []:
+        if row["status"] != "pass":
+            key = {"lens_profile": "warning_lens", "scale_verification": "warning_scale"}.get(row["name"], "warning_quality")
+            if key not in keys:
+                keys.append(key)
+    return [tr(key) for key in keys]
 
 
 def create_app(layout="free"):
@@ -48,7 +240,14 @@ def create_app(layout="free"):
 
     @app.context_processor
     def layout_context():
-        return {"layout": layout}
+        lang = request.values.get("lang", "pt")
+        lang = lang if lang in STRINGS else "pt"
+        selected = chosen_reference()
+        if selected not in CATALOGUE:
+            selected = ""
+        return dict(layout=layout, lang=lang, t=STRINGS[lang], selected=selected,
+                    frontal=request.values.get("reference_frontal") == "true",
+                    catalogue=CATALOGUE, warnings_for=warnings_for)
 
     @app.after_request
     def no_cache(response):
@@ -57,122 +256,65 @@ def create_app(layout="free"):
 
     @app.errorhandler(413)
     def too_large(error):
-        return render_template_string(PAGE, error="Upload exceeds 25 MB"), 413
+        # Never parse an oversized body again while rendering its error page.
+        request.form = ImmutableMultiDict()
+        request.files = ImmutableMultiDict()
+        if request.endpoint == "capture_check":
+            return jsonify(ready=False, error=tr("preview_large")), 413
+        return render_template("index.html", error=tr("large")), 413
+
+    @app.get("/media/<name>")
+    def media(name):
+        if name not in {"easyon-scan.mp4", "easyon-scan-poster.jpg", "easyon-scan.pt.vtt", "easyon-scan.en.vtt"}:
+            from flask import abort
+            abort(404)
+        return send_from_directory(Path(__file__).resolve().parent.parent / "docs", name)
 
     @app.get("/capture")
     def capture():
-        return render_template_string(CAPTURE)
+        return render_template("capture.html")
 
     @app.post("/capture/check")
     def capture_check():
         if (request.content_length or 0) > 500_000:
-            return jsonify(ready=False, error="Preview frame exceeds 500 KB"), 413
+            return jsonify(ready=False, error=tr("preview_large")), 413
         upload = request.files.get("photo")
         if upload is None:
-            return jsonify(ready=False, error="Select a preview frame"), 400
+            return jsonify(ready=False, error=tr("missing")), 400
         try:
             image = load_photo(upload.stream)
             if max(image.shape[:2]) > 1280:
                 raise ScanError("Preview must be at most 1280 pixels per side")
-            rows = measure(image, layout=layout, quality_only=True)
+            rows = measure(image, layout=layout, quality_only=True, reference=chosen_reference() or None, reference_frontal=request.form.get("reference_frontal") == "true")
             states = {r["name"]: r for r in rows}
-            lights = dict(markers="pass", sharpness=states["focus"]["status"],
-                          tilt=states["plane_tilt_proxy"]["status"])
+            lights = dict(markers="pass", sharpness=states.get("focus", {"status": "unknown"})["status"],
+                          tilt=states.get("plane_tilt_proxy", {"status": "unknown"})["status"])
             ready = all(r["status"] != "reject" for r in rows)
-            return jsonify(ready=ready, lights=lights, checks=rows)
+            return jsonify(ready=ready, lights=lights, checks=[dict(row, message=tr("adjust_tip")) for row in rows])
         except (ScanError, UnidentifiedImageError, OSError, ValueError, ImageDecompressionError, cv.error) as exc:
-            return jsonify(ready=False, lights=dict(markers="reject", sharpness="unknown", tilt="unknown"), error=str(exc)), 400
+            return jsonify(ready=False, lights=dict(markers="reject", sharpness="unknown", tilt="unknown"), error=tr("error")), 400
 
     @app.route("/", methods=["GET", "POST"])
     def index():
         if request.method == "GET":
-            return render_template_string(PAGE)
+            return render_template("index.html")
         upload = request.files.get("photo")
         if upload is None:
-            return render_template_string(PAGE, error="Select a photograph"), 400
+            return render_template("index.html", error=tr("missing")), 400
         try:
             import json
             profile = request.files.get("profile")
-            result = measure(upload.stream, layout=layout, profile=json.load(profile.stream) if profile and profile.filename else None)
+            result = measure(upload.stream, layout=layout, profile=json.load(profile.stream) if profile and profile.filename else None, reference=chosen_reference() or None, reference_frontal=request.form.get("reference_frontal") == "true")
+            if request.form.get("response") == "json":
+                return jsonify(result.summary())
             ok, png = cv.imencode(".png", result.preview)
             if not ok:
                 raise ScanError("Could not encode preview")
-            return render_template_string(PAGE, result=result, checks=result.quality_checks,
+            return render_template("index.html", result=result, checks=result.quality_checks,
                 preview=base64.b64encode(png).decode("ascii"),
                 dxf=base64.b64encode(dxf_bytes(result, mode=request.form.get("dxf_mode", "plain"), size=request.form.get("size", "BASE"))).decode("ascii"))
-        except (ScanError, UnidentifiedImageError, OSError, ValueError, ImageDecompressionError) as exc:
-            return render_template_string(PAGE, error=str(exc), checks=getattr(exc, "checks", [])), 400
+        except (ScanError, UnidentifiedImageError, OSError, ValueError, ImageDecompressionError, cv.error) as exc:
+            return render_template("index.html", error=tr("error"), checks=getattr(exc, "checks", [])), 400
 
     return app
 
-
-from PIL.Image import DecompressionBombError as ImageDecompressionError
-
-
-CAPTURE = """<!doctype html><html lang="en"><meta charset="utf-8">
-<title>Camera — EasyON Scan</title>
-<style>body{font:18px system-ui;max-width:900px;margin:30px auto;padding:16px}video{width:100%;max-height:65vh;background:#222}.pass{color:#087a25}.reject{color:#b00020}.unknown,.warn{color:#946000}button{padding:12px}label{display:block}</style>
-<h1>Camera capture</h1><p><a href="/">Upload a photograph</a></p>
-<p>Surround the paper with four distinct 90 mm ArUco cards. Preview checks are experimental;
-full-resolution measurement runs after capture. A green light does not certify accuracy.</p>
-<p>Camera access requires HTTPS or localhost. A phone opening a computer's HTTP LAN address
-cannot normally use its camera; use the upload page or configure trusted local HTTPS.
-No images are saved. Preview frames go only to this local server.</p>
-<button id="start">Start camera</button><button id="stop" disabled>Stop camera</button>
-<video id="video" autoplay muted playsinline></video>
-<p id="status" role="status" aria-live="polite">Camera stopped</p>
-<p id="lights" aria-live="polite">🟡 Markers: unknown · 🟡 Sharpness: unknown · 🟡 Tilt: unknown</p>
-<form id="capture" action="/" method="post" enctype="multipart/form-data">
-<input id="photo" type="file" name="photo" hidden required>
-<label>Camera profile JSON <input type="file" name="profile" accept=".json"></label>
-<label>DXF mode <select name="dxf_mode"><option value="plain">Plain (default)</option><option value="aama">AAMA/ASTM style (experimental)</option></select></label>
-<label>Size <input name="size" value="BASE" maxlength="80"></label>
-<button id="shoot" type="button" disabled>Take photo and measure</button></form>
-<script>
-const video=document.getElementById('video'), start=document.getElementById('start'),
-stop=document.getElementById('stop'), shoot=document.getElementById('shoot'),
-status=document.getElementById('status'), lights=document.getElementById('lights');
-let stream=null, timer=null, generation=0, lastGood=0;
-const canvas=document.createElement('canvas');
-function halt(){generation++;clearTimeout(timer);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;shoot.disabled=true;stop.disabled=true;start.disabled=false;lastGood=0;status.textContent='Camera stopped';lights.textContent='🟡 Markers: unknown · 🟡 Sharpness: unknown · 🟡 Tilt: unknown';}
-async function check(token){
- if(!stream||token!==generation)return;
- shoot.disabled=true;
- try{
-  if(!video.videoWidth)throw Error('Waiting for video');
-  const scale=Math.min(1,1280/Math.max(video.videoWidth,video.videoHeight));
-  canvas.width=Math.round(video.videoWidth*scale);canvas.height=Math.round(video.videoHeight*scale);
-  canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
-  const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.8));
-  const data=new FormData();data.append('photo',blob,'preview.jpg');
-  const response=await fetch('/capture/check',{method:'POST',body:data,signal:AbortSignal.timeout(10000)});
-  const result=await response.json();if(token!==generation)return;
-  const states=result.lights||{markers:'unknown',sharpness:'unknown',tilt:'unknown'};
-  lights.textContent=Object.entries(states).map(([k,v])=>(v==='pass'?'🟢':v==='reject'?'🔴':'🟡')+' '+k+': '+v).join(' · ');
-  status.textContent=result.error||(result.ready?'Ready to capture':'Adjust camera: '+(result.checks||[]).filter(c=>c.status==='reject').map(c=>c.message).join(' '));
-  lastGood=result.ready?Date.now():0;shoot.disabled=!result.ready;
- }catch(e){if(token!==generation)return;lastGood=0;shoot.disabled=true;status.textContent=e.message;lights.textContent='🟡 Preview unavailable';}
- if(token===generation)timer=setTimeout(()=>check(token),1000);
-}
-start.onclick=async()=>{start.disabled=true;const token=++generation;
- try{if(!navigator.mediaDevices?.getUserMedia)throw Error('Camera unavailable: use HTTPS/localhost or upload a photo');
- const acquired=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:4096},height:{ideal:3072}},audio:false});
- if(token!==generation){acquired.getTracks().forEach(t=>t.stop());return;}
- stream=acquired;stream.getVideoTracks().forEach(t=>t.addEventListener('ended',halt));video.srcObject=stream;await video.play();stop.disabled=false;check(token);
- }catch(e){halt();status.textContent=e.message;}};
-stop.onclick=halt;window.addEventListener('pagehide',halt);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)halt();});
-shoot.onclick=async()=>{
- if(!stream||shoot.disabled||Date.now()-lastGood>2500)return;
- shoot.disabled=true;const token=++generation;clearTimeout(timer);
- try{
- const full=document.createElement('canvas');full.width=video.videoWidth;full.height=video.videoHeight;
- full.getContext('2d').drawImage(video,0,0);
- const blob=await new Promise(r=>full.toBlob(r,'image/jpeg',0.95));
- if(token!==generation)return;
- if(!blob||blob.size>25*1024*1024){halt();status.textContent='Photo too large or unavailable; use upload';return;}
- const files=new DataTransfer();files.items.add(new File([blob],'capture.jpg',{type:'image/jpeg'}));
- document.getElementById('photo').files=files.files;halt();status.textContent='Measuring full-resolution photo…';document.getElementById('capture').submit();
- }catch(e){halt();status.textContent='Capture failed: '+e.message+'. Use photograph upload.';}
-};
-</script></html>"""

@@ -425,3 +425,70 @@ the app does not configure certificates or expose the server to the LAN. The
 regular photograph upload remains available. Automated tests cover the page
 and preview endpoint with synthetic frames; real phone/browser camera operation
 and real-photo accuracy are not validated.
+
+## No printer: reference objects (SCAN-14)
+
+ArUco remains the most accurate option. **Recommended no-printer option: a blank
+A4 or US Letter sheet**, flat in portrait orientation on a dark matte table.
+Place it on the **left**, with separate light paper pattern pieces entirely to
+its right and a visible dark gap. Keep every side and the whole pattern visible,
+away from image edges. Photograph close to overhead. Do not draw the pattern on
+the reference sheet. This variant provides a clean light/dark boundary and lets
+extraction exclude the sheet. Remove other light objects.
+
+CLI examples (append --out pattern.dxf):
+
+- easyon-scan measure photo.jpg --reference a4
+- easyon-scan measure photo.jpg --reference letter
+- easyon-scan measure photo.jpg --reference card
+- easyon-scan measure photo.jpg --reference phone:iphone-15
+- easyon-scan measure photo.jpg --reference bic --reference-frontal
+
+Catalogue dimensions and source comments are in easyon_scan/references.py.
+A4 is 210 × 297 mm; Letter 215.9 × 279.4 mm. ID-1 cards are
+85.60 × 53.98 mm with nominal 3.18 mm corner radius. Straight side fits
+extrapolate across rounded corners for a four-corner homography.
+Keep all references in portrait orientation. Small references amplify error
+with distance: put the pattern nearby and independently verify dimensions.
+
+Phone choices: iphone-15, iphone-15-pro, galaxy-s24, edge-50-fusion, each prefixed
+with phone:. Remove cases/bumpers. A plain light display must make the **body
+silhouette** visible against the table; dark bezels, curved edges, glare or
+screen-only boundaries can invalidate the result. Detection cannot prove that
+a boundary is the body. Verify nominal dimensions. Sheets are strongly preferred.
+
+BIC classic J26 uses an **approximate** 25 × 82 mm envelope and **scale only**,
+without perspective correction. A frontal photo and explicit acknowledgement
+are required. Its silhouette and manufacturing variation make this a rough
+fallback; never infer precision from its output.
+
+Python: measure(image, reference="a4"); BIC also needs reference_frontal=True.
+Reference mode supports one photo, free layout, no marker sizes or saved layout.
+JSON includes reference, estimated_accuracy_class (a qualitative experimental
+method class) and warnings. Residual fields are null: four corners provide no
+independent calibration check. Reference and pattern must be coplanar. Camera
+profiles still apply. ArUco-specific quality heuristics do not run in reference
+mode. **No real-photo accuracy is validated.**
+
+The web POST endpoint accepts multipart reference and optional
+reference_frontal=true, with response=json for the summary. The guided UI (SCAN-15) exposes these references and carries the selection to
+`/capture`. Catalogue previews check reference detection; sharpness and tilt
+remain unknown because ArUco quality heuristics do not apply.
+generate_reference(name, perspective=True) supplies deterministic synthetic
+cases; see the reference rows in [benchmark results](docs/benchmark.md).
+
+## Guided local interface (SCAN-15)
+
+The upload and camera pages default to Brazilian Portuguese. Use the PT-BR / EN
+links (or `?lang=en`) to switch languages. UI copy is centralized in `STRINGS`
+in `easyon_scan/web.py`. The responsive cards guide reference selection, photo
+setup, upload/capture and review of the preview, dimensions, warnings and DXF.
+Camera profile JSON, AAMA mode and size are under **Opções avançadas / Advanced
+options**. Catalogue dimensions are nominal; no numerical real-photo accuracy
+is promised. BIC requires explicit frontal-photo confirmation.
+
+The **Como funciona / How it works** video uses the local MP4, poster and PT/EN
+caption files from `docs/`, served through an allowlisted `/media/<name>` route.
+No external fonts, scripts or styles are required. Templates and styles are
+packaged with the Python module; keep the repository's `docs/` directory beside
+the package when running this local video-enabled UI.
