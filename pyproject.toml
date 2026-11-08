@@ -26,4 +26,4 @@ pythonpath = ["."]
 markers = ["slow: synthetic measurement benchmarks"]
 
 [tool.setuptools.package-data]
-easyon_scan = ["templates/*.html", "static/*.css", "static/*.js"]
+easyon_scan = ["templates/*.html", "static/*.css", "static/*.js", "schemas/*.json"]

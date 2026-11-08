@@ -58,9 +58,32 @@ def main():
         p.add_argument("--" + field.name.replace("_", "-"),
                        type=int if field.name in ("jpeg_quality", "annotations") else float,
                        default=field.default)
+    p = commands.add_parser("assembly", help="Convert DXF to experimental garment assembly v0")
+    p.add_argument("file")
+    p.add_argument("--out", required=True)
+    p.add_argument("--size")
+    p.add_argument("--assume-units", choices=("mm", "cm", "in"))
+    p.add_argument("--seam-allowance-mm", type=float)
+    p.add_argument("--report")
     args = parser.parse_args()
     try:
-        if args.command == "calibrate":
+        if args.command == "assembly":
+            from pathlib import Path
+            from .assembly import dxf_to_assembly, validate_assembly
+            assembly = dxf_to_assembly(args.file, size=args.size,
+                assume_units=args.assume_units, seam_allowance_mm=args.seam_allowance_mm)
+            issues = validate_assembly(assembly)
+            Path(args.out).write_text(json.dumps(assembly, indent=2, allow_nan=False)+"\n", encoding="utf-8")
+            edges = [e for p in assembly['panels'] for e in p['edges']]
+            summary = (f"{len(assembly['panels'])} panels, {len(edges)} edges, "
+                       f"{sum(len(e['notches']) for e in edges)} notches, {len(issues)} issues")
+            print(summary)
+            if args.report:
+                Path(args.report).write_text(summary+"\n"+"\n".join(
+                    f"{i['level']}: {i['code']} ({i['panel']}): {i['message']}" for i in issues)+"\n", encoding="utf-8")
+            if any(i['level'] == 'error' for i in issues):
+                parser.exit(1)
+        elif args.command == "calibrate":
             from .lens import board_pdf, calibrate
             from pathlib import Path
             if args.board:
