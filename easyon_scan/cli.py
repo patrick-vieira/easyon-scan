@@ -25,6 +25,11 @@ def main():
     p.add_argument("--debug-overlay")
     p.add_argument("--reference")
     p.add_argument("--all-objects", action="store_true")
+    p.add_argument("--sketch", action="store_true")
+    p.add_argument("--calib-mm-x", type=float)
+    p.add_argument("--calib-mm-y", type=float)
+    p.add_argument("--bar-length")
+    p.add_argument("--bar-points", type=json.loads)
     p.add_argument("--check-reference")
     p.add_argument("--grid-pitch-mm", type=float, default=5.)
     p.add_argument("--json-out")
@@ -81,7 +86,11 @@ def main():
             options = dict(profile=args.profile, marker_size=args.marker_size, layout_file=args.layout_file, save_layout=args.save_layout)
             if (args.reference or args.all_objects or args.check_reference) and len(args.photo) > 1:
                 raise ValueError("References support one photo only")
-            if len(args.photo) > 1:
+            if args.sketch or args.calib_mm_x is not None or args.calib_mm_y is not None:
+                if len(args.photo) != 1: raise ValueError("Sketch requires one photo")
+                from .sketch import measure_sketch
+                result = measure_sketch(args.photo[0], grid_pitch_mm=args.grid_pitch_mm, bar_points=args.bar_points, bar_length=args.bar_length, calib_mm_x=args.calib_mm_x, calib_mm_y=args.calib_mm_y)
+            elif len(args.photo) > 1:
                 if args.layout != "free":
                     raise ValueError("Stitching requires free layout")
                 from .stitch import stitch

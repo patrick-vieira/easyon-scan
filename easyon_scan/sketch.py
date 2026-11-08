@@ -54,9 +54,68 @@ def paths(mask):
     return lines
 
 
-def measure_sketch(source, *, grid_pitch_mm=5., bar_points=None, bar_length=None):
+def calibration_axes(image, H, ink, values):
+    """Recognize the kit's blue dotted rulers in the rectified grid frame.
+
+    Dark overdraw in the narrow ruler corridor takes precedence over print.
+    Written numbers are deliberately supplied by the person, never OCR'd.
+    """
+    b,g,r=cv.split(image.astype(np.int16))
+    yy,xx=np.where((b-r>25)&(b-g>1.3*(g-r))&(r>100))
+    if len(xx)<20:
+        raise ScanError('Calibration lines missing; include the blue dotted kit rulers')
+    metric=project(np.column_stack((xx,yy)),H)
+    correction=np.ones(2); report={}
+    for axis,name,value in zip((0,1),('x','y'),values):
+        if value is None: continue
+        value=length_mm(value)
+        normal=1-axis
+        bins=np.round(metric[:,normal]).astype(int)
+        locations,counts=np.unique(bins,return_counts=True)
+        eligible=[(count,loc) for loc,count in zip(locations,counts)
+                  if np.ptp(metric[bins==loc,axis])>20]
+        if not eligible: raise ScanError("Calibration line missing: "+name)
+        center=float(max(eligible)[1])
+        nearby=metric[np.abs(metric[:,normal]-center)<4]
+        center=float(np.median(nearby[:,normal]))
+        selected=metric[np.abs(metric[:,normal]-center)<3]
+        lo,hi=np.percentile(selected[:,axis],[0,100])
+        if hi-lo<20: raise ScanError('Calibration line missing or too short: '+name)
+        printed_length=float(hi-lo)
+        # Only ink over this ruler is a hand-drawn reference, never sketch ink.
+        iy,ix=np.where(ink>0)
+        dark=project(np.column_stack((ix,iy)),H)
+        inside=(np.abs(dark[:,normal]-center)<1)&(dark[:,axis]>=lo-1)&(dark[:,axis]<=hi+1)
+        over=dark[inside]
+        hand=False
+        if len(over)>20:
+            positions=np.sort(over[:,axis])
+            groups=np.split(positions,np.where(np.diff(positions)>2)[0]+1)
+            runs=[v for v in groups if np.ptp(v)>20]
+            if len(runs)>1: raise ScanError('Ambiguous hand-drawn calibration: '+name)
+            if runs:
+                lo,hi=float(runs[0].min()),float(runs[0].max());hand=True
+        observed=float(hi-lo)
+        correction[axis]=value/observed
+        report[name]=dict(measured_mm=value,detected_length_mm=observed,
+                          correction_factor=float(correction[axis]),
+                          print_stretch_percent=float((correction[axis]*printed_length/100-1)*100),
+                          hand_drawn=hand)
+        # Calibration ink must never become pattern geometry.
+        erase=(np.abs(dark[:,normal]-center)<3)&(dark[:,axis]>=lo-3)&(dark[:,axis]<=hi+3)
+        ink[iy[erase],ix[erase]]=0
+    return np.diag([*correction,1.])@H,report
+
+
+def measure_sketch(source, *, grid_pitch_mm=5., bar_points=None, bar_length=None, calib_mm_x=None, calib_mm_y=None):
     image = source if isinstance(source,np.ndarray) else load_photo(source)
     if not np.isfinite(grid_pitch_mm) or grid_pitch_mm <= 0: raise ValueError('Invalid grid pitch')
+    if calib_mm_x is not None or calib_mm_y is not None:
+        for value in (calib_mm_x,calib_mm_y):
+            if value is not None: length_mm(value)
+        b,g,r=cv.split(image.astype(np.int16))
+        if np.count_nonzero((b-r>25)&(b-g>1.3*(g-r))&(r>100))<20:
+            raise ScanError('Calibration lines missing; include the blue dotted kit rulers')
     gray=cv.cvtColor(image,cv.COLOR_BGR2GRAY)
     # Light/coloured ruling is separated from darker pencil/pen. A dark ruling
     # cannot safely be distinguished from intended straight strokes.
@@ -95,11 +154,20 @@ def measure_sketch(source, *, grid_pitch_mm=5., bar_points=None, bar_length=None
         from .multi import grid_calibration
         light=(gray>150).astype(np.uint8)*255
         contours=cv.findContours(light,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE)[0]
-        fits=[fit for c in contours if cv.contourArea(c)>1000 and (fit:=grid_calibration(image,c,1.,grid_pitch_mm)) is not None]
+        grid_image=image
+        b,g,r=cv.split(image.astype(np.int16))
+        if np.count_nonzero((b-r>25)&(b-g>1.3*(g-r))&(r>100))>20:
+            ruling=(b-r>10)&(b-r<60)&(np.abs((b-g)-(g-r))<8)
+            grid_image=np.full_like(image,255)
+            grid_image[ruling]=(170,170,170)
+        fits=[fit for c in contours if cv.contourArea(c)>1000 and (fit:=grid_calibration(grid_image,c,1.,grid_pitch_mm)) is not None]
         if not fits: raise ScanError('No square grid found; use a scale bar with endpoints')
         H=max(fits,key=lambda f:f[1]['intersection_count'])[0]
     if bar_points is not None:
         cv.line(ink,tuple(pts[0].astype(int)),tuple(pts[1].astype(int)),0,15)
+    calibration={}
+    if calib_mm_x is not None or calib_mm_y is not None:
+        H,calibration=calibration_axes(image,H,ink,(calib_mm_x,calib_mm_y))
     skeleton=thin(ink)
     # Closed strokes enclose background components. Internal open strokes do
     # not partition a region; trace them separately on INTERNAL.
@@ -131,7 +199,9 @@ def measure_sketch(source, *, grid_pitch_mm=5., bar_points=None, bar_length=None
         cv.polylines(preview,[contour],True,(0,0,255),2)
         dims=np.ptp(p.contour_mm,axis=0)
         cv.putText(preview,f'{i}: {dims[0]:.1f} x {dims[1]:.1f} mm',tuple(contour[0]),cv.FONT_HERSHEY_SIMPLEX,.6,(0,0,255),2)
-    return Measurement(pieces[0].contour_mm,sum(p.polygon.area for p in pieces),float(hi[0]-lo[0]),float(hi[1]-lo[1]),None,None,preview,[],pieces,{},'sketch','experimental-sketch',['Experimental tracing; inspect every contour and marking. No real-photo accuracy claim. Scale bars assume a frontal, flat photograph.'])
+    result=Measurement(pieces[0].contour_mm,sum(p.polygon.area for p in pieces),float(hi[0]-lo[0]),float(hi[1]-lo[1]),None,None,preview,[],pieces,{},'sketch','experimental-sketch',['Experimental tracing; inspect every contour and marking. No real-photo accuracy claim. Scale bars assume a frontal, flat photograph.'])
+    result.calibration=calibration
+    return result
 
 
 def tiled_pdf(result):
@@ -159,15 +229,35 @@ def tiled_pdf(result):
     out=BytesIO();pages[0].save(out,'PDF',resolution=254.,save_all=True,append_images=pages[1:]);return out.getvalue()
 
 
-def sketch_kit(out):
+def sketch_kit_image():
+    """A4 at 10 pixels/mm; reserve side corridors outside the drawing grid."""
     page=Image.new('RGB',(2100,2970),'white');d=ImageDraw.Draw(page)
-    d.text((100,60),'SKETCH KIT | 100% actual size | verify grid 5 mm and bar 100 mm',fill='black',font=ImageFont.load_default(size=28))
-    for x in range(100,2001,50): d.line((x,200,x,2500),fill=(170,190,210),width=2)
-    for y in range(200,2501,50): d.line((100,y,2000,y),fill=(170,190,210),width=2)
-    d.line((100,2700,1100,2700),fill='black',width=5)
-    for x in (100,1100): d.line((x,2670,x,2730),fill='black',width=5)
-    d.text((100,2760),'100 mm / 10 cm - measure between end ticks',fill='black',font=ImageFont.load_default(size=30))
-    page.save(out,'PDF',resolution=254.)
+    font=ImageFont.load_default(size=25)
+    d.text((100,60),'SKETCH KIT | 5 mm | Calibrar com regua / Calibrate with ruler',fill=(155,155,155),font=font)
+    for x in range(100,1751,50): d.line((x,200,x,2400),fill=(170,190,210),width=2)
+    for y in range(200,2401,50): d.line((100,y,1750,y),fill=(170,190,210),width=2)
+    color=(150,180,230)
+    for axis,start in [(0,(200,2650)),(1,(1900,400))]:
+        x,y=start
+        for t in range(0,1000,20):
+            d.line((x+(t if axis==0 else 0),y+(t if axis==1 else 0),
+                    x+(t+8 if axis==0 else 0),y+(t+8 if axis==1 else 0)),fill=color,width=3)
+        for t,label in [(0,'0'),(1000,'10 cm')]:
+            px=x+(t if axis==0 else 0);py=y+(t if axis==1 else 0)
+            d.line((px-(0 if axis==0 else 20),py-(20 if axis==0 else 0),
+                    px+(0 if axis==0 else 20),py+(20 if axis==0 else 0)),fill=color,width=3)
+            d.text((px-20,py+25),label,fill=(155,155,155),font=font)
+        bx,by=(200,2770) if axis==0 else (1765,1500)
+        d.rectangle((bx,by,bx+(700 if axis==0 else 300),by+120),outline=(180,180,180),width=2)
+        d.text((bx+5,by+10),'medido:' if axis else 'medido: ____ mm / measured',fill=(155,155,155),font=font)
+        if axis:d.text((bx+5,by+55),'____ mm',fill=(155,155,155),font=font)
+    d.text((100,2460),'X / Y: medir pontilhado ou tracar comprimento conhecido com regua.',fill=(155,155,155),font=font)
+    d.text((100,2510),'Measure dotted lines or draw known lengths over them. Enter X / Y in mm.',fill=(155,155,155),font=font)
+    return page
+
+
+def sketch_kit(out):
+    sketch_kit_image().save(out,'PDF',resolution=254.)
 
 
 def real_size_svg(result):

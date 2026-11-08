@@ -50,6 +50,8 @@ class Measurement:
                              "hole_count": len(p.holes_mm),
                              "notch_count": len(p.notches_mm),
                              "grain_count": len(p.grain_lines_mm)} for p in self.pieces or []]
+        if hasattr(self, "calibration"):
+            result["calibration"] = self.calibration
         if hasattr(self, "objects"):
             result.update(objects=self.objects, check_reference=self.check_reference, scale_mm_per_pixel=self.scale_mm_per_pixel, mode="multi-object")
         return result
