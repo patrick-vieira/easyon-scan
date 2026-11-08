@@ -94,12 +94,66 @@ width/height error below 1 mm
 against a known 400 × 600 mm rectangle, reread the DXF with ezdxf, check PDF page
 sizes, test the upload/download flow, and reject missing references/paper.
 
+### Synthetic photo batches
+
+Generate fixed-layout cases without a printer or camera:
+
+```sh
+easyon-scan synthetic --out cases --count 10 --seed 2026 \
+  --tilt-deg 20 --radial-k1 0.04 --shadow 0.25 --curl-mm 2 \
+  --lighting 0.25 --printer-scale 1.02 --noise-sigma 3 --jpeg-quality 65
+# These fixtures use the fixed marker layout:
+easyon-scan measure cases/case-0000.png --layout fixed --out pattern.dxf
+python scripts/benchmark.py --count 3 --seed 2026
+pytest -q  # Includes the small benchmark marked slow
+# To skip the benchmark test: pytest -q -m 'not slow'
+```
+
+The batch contains lossless `case-NNNN.png` files and `manifest.json` (schema
+version 1). Each entry records its filename, seed, layout, exact parameters and
+nominal ground truth: width/height in mm, area in mm², contour coordinates in mm
+in the fixed-layout frame, and actual printed black-square size in mm. Case i
+uses seed + i. Existing case files or manifests are refused. Reproduction assumes
+the same NumPy/OpenCV versions. PNG preserves the simulated JPEG artifacts without
+an additional lossy save.
+
+The Python API is `generate_case(seed=..., parameters=Parameters(...))`, returning
+an image and metadata; `generate_batch(folder, count=..., seed=..., parameters=...)`
+writes a manifest. Existing `generate` and `generate_free` fixtures remain available.
+All effects default to disabled (`printer_scale=1`, `jpeg_quality=100`). Parameters:
+
+| Parameter | Range | Model |
+|---|---|---|
+| `tilt_deg` | −45…45 degrees | Pinhole plane projection about the horizontal camera axis, with wider framing at larger tilts |
+| `radial_k1` | −0.4…0.4 | Inverse radial sampling, radius normalized by half the image diagonal |
+| `shadow` | 0…0.9 | Broad soft Gaussian attenuation |
+| `curl_mm` | 0…20 mm | Sinusoidal horizontal displacement of the paper, random phase |
+| `lighting` | 0…0.9 | Multiplicative linear illumination gradient |
+| `printer_scale` | 0.9…1.1 | Uniform scaling of marker cards only (0.98 means 98%) |
+| `noise_sigma` | 0…50 intensity levels | Independent Gaussian sensor noise, clipped to 8 bits |
+| `jpeg_quality` | integer 1…100 | JPEG encode/decode; 100 bypasses compression |
+
+Effects apply as card scaling, waviness, shadow/lighting, perspective, radial
+distortion, sensor noise, then JPEG compression. The pattern's independent nominal size stays
+400 × 600 mm, including when cards are printed at the wrong scale. Curl is a
+projected waviness approximation, not a physical 3D paper model or a change to
+material dimensions. These controlled defects are sensitivity fixtures, not
+validated models of phone cameras or real paper.
+
+[Benchmark results](docs/benchmark.md) report mean, p95 and worst absolute dimension
+error (the larger of width and height error) per defect profile, plus rejection
+rates using free-layout calibration (assumed 90 mm cards). `--count` is cases per profile. The fixed seed varies noise and waviness;
+other profiles repeat their deterministic geometry. Accepted-case statistics
+exclude rejected images; all-rejected profiles report N/A. The benchmark does
+not reproduce the earlier research prototype's contour-error metric and does
+not establish real-photo accuracy.
+
 ## Accuracy and limits
 
 The preceding research prototype reported **synthetic mean contour error around
 0.05 mm** under selected calibrated conditions (not width/height error and not a
 real-photo guarantee). This smaller package has a separate synthetic smoke test;
-it does not reproduce that full benchmark. **Real phone photos are not yet
+the sensitivity benchmark above does not reproduce that full benchmark. **Real phone photos are not yet
 validated.** Successful marker detection does not certify the resulting scale.
 
 The scanner detects ArUco DICT_4X4_50 markers. Free calibration starts from one
