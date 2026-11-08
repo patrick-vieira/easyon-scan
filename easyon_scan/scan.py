@@ -50,6 +50,8 @@ class Measurement:
                              "hole_count": len(p.holes_mm),
                              "notch_count": len(p.notches_mm),
                              "grain_count": len(p.grain_lines_mm)} for p in self.pieces or []]
+        if hasattr(self, "objects"):
+            result.update(objects=self.objects, check_reference=self.check_reference, scale_mm_per_pixel=self.scale_mm_per_pixel, mode="multi-object")
         return result
 
 
@@ -77,7 +79,7 @@ def cruzamento(channel,points,level):
     return p
 
 
-def measure(source, layout="free", profile=None, *, quality_only=False, marker_size=None, layout_file=None, save_layout=None, reference=None, reference_frontal=False):
+def measure(source, layout="free", profile=None, *, quality_only=False, marker_size=None, layout_file=None, save_layout=None, reference=None, reference_frontal=False, debug_overlay=None, all_objects=False, check_reference=None, grid_pitch_mm=5.):
     if layout not in ("free", "fixed"):
         raise ValueError("Layout must be free or fixed")
     if reference and (layout != "free" or marker_size or layout_file or save_layout):
@@ -99,13 +101,33 @@ def measure(source, layout="free", profile=None, *, quality_only=False, marker_s
     if profile is not None:
         from .lens import undistort
         image = undistort(image, profile)
+    if check_reference and not all_objects:
+        raise ValueError("Check reference requires multi-object mode")
+    if all_objects:
+        from .multi import measure_all
+        result = measure_all(image, reference, check_reference, grid_pitch_mm)
+        if debug_overlay and not cv.imwrite(str(debug_overlay), result.preview):
+            raise OSError("Could not write diagnostic overlay")
+        return result.quality_checks if quality_only else result
     gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
     if reference:
         from .references import detect, get_reference
-        inverse, corners, warnings = detect(gray, reference, reference_frontal)
+        try:
+            inverse, corners, warnings, pattern_mask, overlay = detect(image, reference, reference_frontal, details=True)
+        except ScanError as exc:
+            if debug_overlay and getattr(exc, "overlay", None) is not None:
+                cv.imwrite(str(debug_overlay), exc.overlay)
+            raise
+        if debug_overlay:
+            if not cv.imwrite(str(debug_overlay), overlay):
+                raise OSError("Could not write diagnostic overlay")
         if profile is None:
             warnings.append("No lens profile: uncorrected lens distortion may affect dimensions.")
-        result = _measure_calibrated(image, gray, corners, "free", profile is not None, quality_only, reference_data=(inverse, warnings))
+        try:
+            result = _measure_calibrated(image, gray, corners, "free", profile is not None, quality_only, reference_data=(inverse, warnings, pattern_mask))
+        except ScanError as exc:
+            exc.overlay = overlay
+            raise
         if not quality_only:
             result.reference = reference
             result.estimated_accuracy_class = get_reference(reference).accuracy
@@ -143,7 +165,7 @@ def measure(source, layout="free", profile=None, *, quality_only=False, marker_s
 
 def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_only=False, sizes=None, known=None, reference_data=None):
     if reference_data is not None:
-        inverse, warnings = reference_data
+        inverse, warnings, pattern_mask = reference_data
         homography = np.linalg.inv(inverse)
         world = project(photo, inverse)
         residual_mm = 0.
@@ -201,13 +223,22 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_on
         for marker in photo.reshape(-1, 4, 2):
             expanded = marker.mean(0) + (marker-marker.mean(0))*(1.03 if reference_data is not None else 1.25)
             cv.fillConvexPoly(valid, np.rint(expanded-a).astype(np.int32), 0)
-    values = crop[valid > 0]
-    otsu, _ = cv.threshold(values, 0, 255, cv.THRESH_BINARY+cv.THRESH_OTSU)
-    dark, light = values[values <= otsu], values[values > otsu]
-    if not len(dark) or not len(light) or np.median(light)-np.median(dark) < 30:
-        raise ScanError("Need light paper on a contrasting dark table")
-    threshold = (float(np.median(dark))+float(np.median(light)))/2
-    mask = ((crop > threshold) & (valid > 0)).astype(np.uint8)*255
+    if reference_data is not None:
+        mask = pattern_mask[a[1]:b[1]+1, a[0]:b[0]+1].copy()
+        from .references import foreground
+        _, colour_distance = foreground(image, with_distance=True, segment=False)
+        threshold = float(np.median(colour_distance[pattern_mask>0]))/2
+        if np.std(np.concatenate((gray[0],gray[-1],gray[:,0],gray[:,-1]))) > 10:
+            colour_distance = pattern_mask
+            threshold = 127.5
+    else:
+        values = crop[valid > 0]
+        otsu, _ = cv.threshold(values, 0, 255, cv.THRESH_BINARY+cv.THRESH_OTSU)
+        dark, light = values[values <= otsu], values[values > otsu]
+        if not len(dark) or not len(light) or np.median(light)-np.median(dark) < 30:
+            raise ScanError("Need light paper on a contrasting dark table")
+        threshold = (float(np.median(dark))+float(np.median(light)))/2
+        mask = ((crop > threshold) & (valid > 0)).astype(np.uint8)*255
     contours, hierarchy = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_NONE)
     if not contours:
         raise ScanError("No paper outline found")
@@ -233,7 +264,7 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_on
         raise ScanError("Paper touches marker cards or working area edge; surround the whole pattern with a gap")
     if not candidates:
         raise ScanError("No plausible paper outline found")
-    channel = gray.astype(np.float32)
+    channel = colour_distance.astype(np.float32) if reference_data is not None else gray.astype(np.float32)
 
     def refine(index):
         pixels = contours[index].reshape(-1, 2).astype(float)+a

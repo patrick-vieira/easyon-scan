@@ -21,7 +21,13 @@ def main():
     p.add_argument("--save-layout")
     p.add_argument("--out", required=True)
     p.add_argument("--preview")
+    p.add_argument("--debug-overlay")
     p.add_argument("--reference")
+    p.add_argument("--all-objects", action="store_true")
+    p.add_argument("--check-reference")
+    p.add_argument("--grid-pitch-mm", type=float, default=5.)
+    p.add_argument("--json-out")
+    p.add_argument("--table-out")
     p.add_argument("--reference-frontal", action="store_true")
     p.add_argument("--dxf-mode", choices=("plain", "aama"), default="plain")
     p.add_argument("--size", default="BASE", help="Size label for AAMA-style DXF")
@@ -68,7 +74,7 @@ def main():
             print(f"Saved {args.out}. Print at 100%; cut and place as instructed.")
         elif args.command == "measure":
             options = dict(profile=args.profile, marker_size=args.marker_size, layout_file=args.layout_file, save_layout=args.save_layout)
-            if args.reference and len(args.photo) > 1:
+            if (args.reference or args.all_objects or args.check_reference) and len(args.photo) > 1:
                 raise ValueError("References support one photo only")
             if len(args.photo) > 1:
                 if args.layout != "free":
@@ -76,11 +82,22 @@ def main():
                 from .stitch import stitch
                 result = stitch(args.photo, **options)
             else:
-                result = measure(args.photo[0], layout=args.layout, reference=args.reference, reference_frontal=args.reference_frontal, **options)
+                result = measure(args.photo[0], layout=args.layout, reference=args.reference, reference_frontal=args.reference_frontal, debug_overlay=args.debug_overlay, all_objects=args.all_objects, check_reference=args.check_reference, grid_pitch_mm=args.grid_pitch_mm, **options)
             export_dxf(result, args.out, mode=args.dxf_mode, size=args.size)
             if args.preview and not cv.imwrite(args.preview, result.preview):
                 raise OSError("Could not write preview")
-            print(json.dumps(result.summary(), indent=2))
+            payload = json.dumps(result.summary(), indent=2, ensure_ascii=False, allow_nan=False)
+            if args.json_out:
+                from pathlib import Path
+                Path(args.json_out).write_text(payload+"\n")
+            if args.all_objects:
+                from .multi import table_pt
+                table = table_pt(result.summary())
+                print(table, file=sys.stderr)
+                if args.table_out:
+                    from pathlib import Path
+                    Path(args.table_out).write_text(table+"\n")
+            print(payload)
             if result.residual_mm is not None and result.residual_mm > 1:
                 print("Warning: marker residual exceeds 1 mm; inspect placement and photo.", file=sys.stderr)
         else:
@@ -88,5 +105,5 @@ def main():
             create_app(layout=args.layout).run(host="127.0.0.1", port=8765, debug=False)
     except (ScanError, OSError, ValueError) as exc:
         if args.command == "measure":
-            print(json.dumps({"error": str(exc), "quality_checks": getattr(exc, "checks", [])}))
+            print(json.dumps({"error": str(exc), "code": getattr(exc, "code", None), "quality_checks": getattr(exc, "checks", [])}))
         parser.exit(2, f"Error: {exc}\n")

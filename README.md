@@ -492,3 +492,32 @@ caption files from `docs/`, served through an allowlisted `/media/<name>` route.
 No external fonts, scripts or styles are required. Templates and styles are
 packaged with the Python module; keep the repository's `docs/` directory beside
 the package when running this local video-enabled UI.
+
+### SCAN-17b: experimental multi-object plane measurements
+
+```sh
+easyon-scan measure photo.jpg --all-objects --reference bic \
+  --grid-pitch-mm 5 --out objects.dxf \
+  --preview overlay.png --json-out objects.json --table-out objects.md
+```
+
+A detected paper lattice calibrates the entire table plane. All accepted objects
+use that same homography. Confirm the physical grid pitch (default 5 mm); folded
+paper, object thickness and extrapolation beyond the lattice introduce error.
+Intersection count, inlier fraction and fit residual are recorded; residual is
+internal consistency, not physical accuracy. Without a lattice, the legacy
+scale-only mode remains available.
+
+The flat J26 is checked after rectification against its approximate 82 mm nominal
+length. Its signed discrepancy estimates observed length error without rescaling
+the plane. Compact coloured candidates inconsistent with the plane envelope are
+excluded as `fora do plano`; this heuristic is not a general 3D pose detector.
+Both lighters in the reviewed photos are J26. `bic-mini` remains in the catalogue;
+it is never automatically assigned as a check reference in multi-object mode.
+
+L keys report long and short arm lengths along centreline directions, from the
+outer tip to the outer bend support line. Complete polygon sides stay in JSON.
+Paper reports four contour sides. Ignored background candidates have no exported
+DXF outline or measurements. The numbered overlay includes 28 px labels and a
+measurement legend. Inspect segmentation and exclusions against the photograph.
+Real-photo inputs, overlays and reports remain in the supplied local output tree.

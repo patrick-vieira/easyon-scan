@@ -250,7 +250,7 @@ def generate_reference(reference="a4", *, perspective=True):
         for cy in (y+radius,y+h-radius):
             cv.circle(image, (cx,cy), radius, (240,)*3, -1)
     image[160:940, 1000:1540] = 240
-    if perspective and reference != "bic":
+    if perspective and reference not in ("bic", "bic-mini"):
         source = np.float32([[0,0],[1699,0],[1699,1099],[0,1099]])
         target = np.float32([[80,45],[1640,90],[1680,1050],[25,1000]])
         image = cv.warpPerspective(image, cv.getPerspectiveTransform(source,target),

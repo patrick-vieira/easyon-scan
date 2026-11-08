@@ -1,1 +1,5 @@
 <details><summary>{{ t.advanced }}</summary><div class="fields"><label>{{ t.profile }}<input type="file" name="profile" accept=".json,application/json"></label><label>{{ t.mode }}<select name="dxf_mode"><option value="plain" {% if request.form.get('dxf_mode')=='plain' %}selected{% endif %}>{{ t.plain }}</option><option value="aama" {% if request.form.get('dxf_mode')=='aama' %}selected{% endif %}>{{ t.aama }}</option></select></label><label>{{ t.size }}<input name="size" value="{{ request.form.get('size','BASE') }}" maxlength="80"></label></div></details>
+
+<label class="checkbox"><input type="checkbox" name="all_objects" value="true">Todos os objetos / All objects (experimental)</label>
+<label>Conferir referência / Check reference<select name="check_reference"><option value="">Nenhuma / None</option>{% for key,spec in catalogue.items() %}<option value="{{ key }}">{{ key }}</option>{% endfor %}</select></label>
+<label>Passo da malha / Grid pitch (mm)<input name="grid_pitch_mm" type="number" min="0.1" step="0.1" value="5"></label>
