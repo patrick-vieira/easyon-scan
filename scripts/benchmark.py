@@ -111,6 +111,8 @@ def write_report(results, out, seed):
             lines.append('  Rejections: ' + '; '.join(sorted(set(row['rejections']))))
     lines += ['', 'Reproduce from the repository root:', '', '```sh',
               f'python scripts/benchmark.py --count {results[0]["count"]} --seed {seed}', '```', '']
+    from scripts.benchmark_references import report as reference_report
+    lines += ['', reference_report()]
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('\n'.join(lines), encoding='utf-8')

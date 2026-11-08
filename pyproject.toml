@@ -24,3 +24,6 @@ include = ["easyon_scan*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = ["slow: synthetic measurement benchmarks"]
+
+[tool.setuptools.package-data]
+easyon_scan = ["templates/*.html", "static/*.css", "static/*.js"]

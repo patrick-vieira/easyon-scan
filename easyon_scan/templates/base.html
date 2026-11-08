@@ -1,0 +1,4 @@
+<!doctype html>
+<html lang="{{ t.lang }}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>EasyON Scan</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body><a class="skip" href="#main">{{ t.skip }}</a><header><a class="brand" href="{{ url_for('index', lang=lang) }}">EasyON <strong>Scan</strong></a><nav aria-label="{{ t.language }}"><a href="{{ url_for(request.endpoint, lang='pt', reference=selected, reference_frontal='true' if frontal else '') }}" lang="pt-BR" {% if lang=='pt' %}aria-current="true"{% endif %}>PT-BR</a><a href="{{ url_for(request.endpoint, lang='en', reference=selected, reference_frontal='true' if frontal else '') }}" lang="en" {% if lang=='en' %}aria-current="true"{% endif %}>EN</a></nav></header>
+<main id="main">{% block content %}{% endblock %}</main><footer>{{ t.privacy }}</footer></body></html>

@@ -229,3 +229,30 @@ def draw_annotations(image, left, top, width, height):
     fill([[x,y-50],[x-5,y-42],[x-1,y-42],[x-1,y+42],
           [x-5,y+42],[x,y+50],[x+5,y+42],[x+1,y+42],
           [x+1,y-42],[x+5,y-42]])
+
+
+def generate_reference(reference="a4", *, perspective=True):
+    """Isolated portrait reference left of a 180 × 260 mm paper piece.
+
+    Rounded card/phone body silhouettes exercise straight-side extrapolation.
+    BIC is deliberately frontal and approximates the nominal body envelope.
+    """
+    from .references import get_reference
+    spec = get_reference(reference)
+    scale = 3
+    image = np.full((1100, 1700, 3), 40, np.uint8)
+    x, y = 80, 80
+    w, h = round(spec.width*scale), round(spec.height*scale)
+    radius = round((spec.radius or (5 if reference.startswith("phone:") else 0))*scale)
+    cv.rectangle(image, (x+radius,y), (x+w-radius,y+h), (240,)*3, -1)
+    cv.rectangle(image, (x,y+radius), (x+w,y+h-radius), (240,)*3, -1)
+    for cx in (x+radius,x+w-radius):
+        for cy in (y+radius,y+h-radius):
+            cv.circle(image, (cx,cy), radius, (240,)*3, -1)
+    image[160:940, 1000:1540] = 240
+    if perspective and reference != "bic":
+        source = np.float32([[0,0],[1699,0],[1699,1099],[0,1099]])
+        target = np.float32([[80,45],[1640,90],[1680,1050],[25,1000]])
+        image = cv.warpPerspective(image, cv.getPerspectiveTransform(source,target),
+                                   (1700,1100), borderValue=(40,)*3)
+    return image, dict(width_mm=180., height_mm=260., reference=reference)

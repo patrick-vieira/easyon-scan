@@ -232,7 +232,7 @@ def test_multi_piece_web_and_cli(tmp_path):
     encoded = cv.imencode('.png', image)[1].tobytes()
     response = create_app().test_client().post('/', data={'photo': (BytesIO(encoded), 'pieces.png')})
     assert response.status_code == 200
-    assert b'Pieces: 2' in response.data
+    assert 'Peças: 2' in response.get_data(as_text=True)
     match = re.search(rb'data:application/dxf;base64,([^\"]+)', response.data)
     doc = ezdxf.read(StringIO(base64.b64decode(match[1]).decode()))
     assert len(doc.modelspace().query('LWPOLYLINE')) == 4

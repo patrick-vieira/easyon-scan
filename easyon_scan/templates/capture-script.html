@@ -1,0 +1,47 @@
+
+const video=document.getElementById('video'), start=document.getElementById('start'),
+stop=document.getElementById('stop'), shoot=document.getElementById('shoot'),
+status=document.getElementById('status'), lights=document.getElementById('lights');
+let stream=null, timer=null, generation=0, lastGood=0;
+const canvas=document.createElement('canvas');
+function halt(){generation++;clearTimeout(timer);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;video.srcObject=null;shoot.disabled=true;stop.disabled=true;start.disabled=false;lastGood=0;status.textContent=t.stopped;lights.textContent=t.waiting;}
+async function check(token){
+ if(!stream||token!==generation)return;
+ shoot.disabled=true;
+ try{
+  if(!video.videoWidth)throw Error(t.waiting);
+  const scale=Math.min(1,1280/Math.max(video.videoWidth,video.videoHeight));
+  canvas.width=Math.round(video.videoWidth*scale);canvas.height=Math.round(video.videoHeight*scale);
+  canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+  const blob=await new Promise(r=>canvas.toBlob(r,'image/jpeg',0.8));
+  const data=new FormData();data.append('photo',blob,'preview.jpg');data.append('reference',reference);data.append('reference_frontal',frontal);
+  const response=await fetch(checkUrl,{method:'POST',body:data,signal:AbortSignal.timeout(10000)});
+  const result=await response.json();if(token!==generation)return;
+  const states=result.lights||{markers:'unknown',sharpness:'unknown',tilt:'unknown'};
+  lights.textContent=Object.entries(states).map(([k,v])=>(v==='pass'?'🟢':v==='reject'?'🔴':'🟡')+' '+(t[k]||k)+': '+(t[v]||v)).join(' · ');
+  status.textContent=result.error||(result.ready?t.ready:t.adjust+t.adjust_tip);
+  lastGood=result.ready?Date.now():0;shoot.disabled=!result.ready;
+ }catch(e){if(token!==generation)return;lastGood=0;shoot.disabled=true;status.textContent=t.camera_error;lights.textContent=t.unavailable;}
+ if(token===generation)timer=setTimeout(()=>check(token),1000);
+}
+start.onclick=async()=>{start.disabled=true;const token=++generation;
+ try{if(!navigator.mediaDevices?.getUserMedia)throw Error(t.camera_error);
+ const acquired=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:4096},height:{ideal:3072}},audio:false});
+ if(token!==generation){acquired.getTracks().forEach(t=>t.stop());return;}
+ stream=acquired;stream.getVideoTracks().forEach(t=>t.addEventListener('ended',halt));video.srcObject=stream;await video.play();stop.disabled=false;check(token);
+ }catch(e){halt();status.textContent=t.camera_error;}};
+stop.onclick=halt;window.addEventListener('pagehide',halt);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)halt();});
+shoot.onclick=async()=>{
+ if(!stream||shoot.disabled||Date.now()-lastGood>2500)return;
+ shoot.disabled=true;const token=++generation;clearTimeout(timer);
+ try{
+ const full=document.createElement('canvas');full.width=video.videoWidth;full.height=video.videoHeight;
+ full.getContext('2d').drawImage(video,0,0);
+ const blob=await new Promise(r=>full.toBlob(r,'image/jpeg',0.95));
+ if(token!==generation)return;
+ if(!blob||blob.size>25*1024*1024){halt();status.textContent=t.photo_error;return;}
+ const files=new DataTransfer();files.items.add(new File([blob],'capture.jpg',{type:'image/jpeg'}));
+ document.getElementById('photo').files=files.files;halt();status.textContent=t.measuring;document.getElementById('capture').submit();
+ }catch(e){halt();status.textContent=t.camera_error;}
+};
