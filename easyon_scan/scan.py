@@ -17,6 +17,8 @@ class Piece:
     notches_mm: list = field(default_factory=list)
     grain_lines_mm: list = field(default_factory=list)
 
+    internal_lines_mm: list = field(default_factory=list)
+
     @property
     def polygon(self):
         return Polygon(self.contour_mm, self.holes_mm)
@@ -69,7 +71,7 @@ def cruzamento(channel,points,level):
     return p
 
 
-def measure(source, layout="free", profile=None):
+def measure(source, layout="free", profile=None, *, quality_only=False):
     if layout not in ("free", "fixed"):
         raise ValueError("Layout must be free or fixed")
     image = load_photo(source) if not isinstance(source, np.ndarray) else source
@@ -92,12 +94,12 @@ def measure(source, layout="free", profile=None):
     photo = cv.cornerSubPix(gray, photo.reshape(-1, 1, 2), (5, 5), (-1, -1),
                             (cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 40, .001)).reshape(-1, 2).astype(float)
     try:
-        return _measure_calibrated(image, gray, photo, layout, profile is not None)
+        return _measure_calibrated(image, gray, photo, layout, profile is not None, quality_only)
     except (np.linalg.LinAlgError, FloatingPointError) as exc:
         raise ScanError("Degenerate marker layout") from exc
 
 
-def _measure_calibrated(image, gray, photo, layout, calibrated=False):
+def _measure_calibrated(image, gray, photo, layout, calibrated=False, quality_only=False):
     if layout == "free":
         inverse, world, residual_mm = free_homography(photo)
         homography = np.linalg.inv(inverse)
@@ -133,6 +135,8 @@ def _measure_calibrated(image, gray, photo, layout, calibrated=False):
         raise ScanError("Extreme working hull geometry; reposition markers and retake photo")
     from .quality import checks
     quality = checks(gray, photo, homography, residual_mm, calibrated)
+    if quality_only:
+        return quality
     rejected = [row for row in quality if row["status"] == "reject"]
     if rejected:
         error = ScanError("Photo quality: " + "; ".join(row["name"] + ": " + row["message"] for row in rejected))

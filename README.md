@@ -236,7 +236,8 @@ preview. Light objects may be indistinguishable from pattern pieces, and touchin
 or overlapping pieces may appear as one outline. These cases cannot always be
 rejected from a single photo. Inspect the preview and independently check dimensions before use.
 Outer contours, holes and the annotation convention below are exported.
-**No seam allowance, grading or AAMA/ASTM semantics**. Audaces compatibility has not been validated.
+**No seam allowance or grading**. The optional AAMA/ASTM-style export below is experimental.
+**Compatibility with specific CAD systems, including Audaces, is NOT validated.**
 
 The detector uses AprilTag corner refinement followed by explicit subpixel
 refinement: local OpenCV 4.13/4.14 default ArUco refinement displaced the
@@ -249,7 +250,7 @@ applies to this project's code, not all third-party binary components.
 - Validate against measured real phone photographs and publish error distributions.
 - Validate camera profiles and quality-check thresholds on real devices.
 - Support custom marker sizes and persisted layouts.
-- Validate annotation recognition on real photos; add AAMA/ASTM export.
+- Validate annotation recognition on real photos and AAMA/ASTM-style exports in fashion CAD.
 - Add multi-photo stitching and broader lighting/contrast fixtures.
 
 ## Provenance and development
@@ -293,3 +294,70 @@ symbol recognition accuracy.
 For independent physical comparisons, use the bilingual
 [real-photo protocol](docs/real-photo-protocol.md) and scripts/real_photo_report.py.
 Real-photo accuracy remains unvalidated.
+
+
+## AAMA/ASTM-style DXF export (experimental)
+
+Plain geometric DXF remains the default in the CLI, Python API and web UI.
+Select **AAMA/ASTM style** in the web form, or use:
+
+```sh
+easyon-scan measure photo.jpg --out pattern.dxf --dxf-mode aama --size 38
+```
+
+This is a limited AAMA/ASTM D6673-style interchange representation, not a claim
+of full standard conformance. It writes DXF R2000 with explicit millimetre units,
+classic 2D POLYLINE/VERTEX entities and one named piece BLOCK plus an INSERT per
+piece. All INSERTs are at zero: the shared y-up transform preserves relative
+placement and dimensions. The layer mapping is:
+
+| Layer | Contents |
+|---|---|
+| 1 | Closed outer boundary and `Piece Name:` / `Size:` TEXT |
+| 4 | Notch POINT at the midpoint of the recognized triangle's base |
+| 7 | Grain LINE along the recognized arrow's principal axis, between its projected extremes |
+| 8 | Open internal POLYLINEs supplied through the Python API |
+| 11 | Closed internal cutout POLYLINEs (holes) |
+
+Names default to PIECE_001, PIECE_002, etc.; size defaults to BASE. Python callers
+can use `dxf_bytes(result, mode="aama", size="38", piece_names=["Front", "Back"])`
+or the same keyword arguments to `export_dxf(result, path, ...)`. The optional
+`Piece.internal_lines_mm` contains open Nx2 polylines; the photo detector does
+not infer arbitrary internal construction lines. Plain export writes these on
+INTERNAL. Existing notch and grain ink polygons remain unchanged in plain mode.
+No seam allowance, grade rules, curves, drill points or production metadata are
+inferred. Notch depth and the grain arrow's ink shape are not represented in the
+AAMA-style point/line conversion.
+
+Tests re-read exports with ezdxf and check blocks, layers, text, geometry,
+placement and units. This only verifies our DXF structure, not fashion CAD import.
+**Compatibility with specific CAD systems (including Audaces) is NOT validated.**
+Inspect imports and compare dimensions in your target CAD before production use.
+
+## Local camera capture (experimental)
+
+Open `/capture` from the local web UI and choose **Start camera**. The browser
+uses getUserMedia with the rear camera preferred. Once per completed request
+(about once per second), it sends a JPEG preview of at most 1280 pixels per side
+to `/capture/check`. The existing local OpenCV ArUco detection, homography and
+quality checks run there; no CDN, browser CV dependency or external service is
+used. Markers, sharpness and tilt are shown as green/red/unknown traffic lights.
+Other rejecting checks also block capture and show a hint. Preview frames and
+photographs remain in memory; checks do not require a paper outline.
+
+Capture is enabled only after passing checks, with a fresh result. It submits
+the camera video's full-resolution JPEG to the normal measurement flow, where
+all checks and outline extraction run again. An optional camera profile applies
+to that final measurement only; preview checks use uncorrected low-resolution
+frames. Preview thresholds are experimental and may be conservative after
+resizing. The tilt light is the existing homography anisotropy proxy, not an angle.
+Stopping the camera, hiding the page or leaving it releases the camera stream.
+
+**Phone browser constraint:** getUserMedia requires a secure context (HTTPS or
+localhost). The server still binds to 127.0.0.1 by default. Opening a computer's
+plain HTTP LAN address on a phone normally cannot access the phone camera. For
+remote phone capture, provide trusted local HTTPS and forwarding separately;
+the app does not configure certificates or expose the server to the LAN. The
+regular photograph upload remains available. Automated tests cover the page
+and preview endpoint with synthetic frames; real phone/browser camera operation
+and real-photo accuracy are not validated.

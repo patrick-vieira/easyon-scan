@@ -19,6 +19,8 @@ def main():
     p.add_argument("photo")
     p.add_argument("--out", required=True)
     p.add_argument("--preview")
+    p.add_argument("--dxf-mode", choices=("plain", "aama"), default="plain")
+    p.add_argument("--size", default="BASE", help="Size label for AAMA-style DXF")
     p.add_argument("--profile")
     commands.add_parser("web", help="Open local upload interface at 127.0.0.1:8765")
     for command in commands.choices.values():
@@ -60,7 +62,7 @@ def main():
             print(f"Saved {args.out}. Print at 100%; cut and place as instructed.")
         elif args.command == "measure":
             result = measure(args.photo, layout=args.layout, profile=args.profile)
-            export_dxf(result, args.out)
+            export_dxf(result, args.out, mode=args.dxf_mode, size=args.size)
             if args.preview and not cv.imwrite(args.preview, result.preview):
                 raise OSError("Could not write preview")
             print(json.dumps(result.summary(), indent=2))
