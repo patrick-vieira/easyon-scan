@@ -22,3 +22,5 @@ include = ["easyon_scan*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["slow: synthetic measurement benchmarks"]

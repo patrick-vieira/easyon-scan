@@ -22,9 +22,23 @@ def main():
     commands.add_parser("web", help="Open local upload interface at 127.0.0.1:8765")
     for command in commands.choices.values():
         command.add_argument("--layout", choices=("free", "fixed"), default="free")
+    p = commands.add_parser("synthetic", help="Generate synthetic cases and a metric manifest")
+    p.add_argument("--out", required=True)
+    p.add_argument("--count", type=int, default=10)
+    p.add_argument("--seed", type=int, default=0)
+    from .synthetic import Parameters, generate_batch
+    from dataclasses import fields
+    for field in fields(Parameters):
+        p.add_argument("--" + field.name.replace("_", "-"),
+                       type=int if field.name == "jpeg_quality" else float,
+                       default=field.default)
     args = parser.parse_args()
     try:
-        if args.command == "sheet":
+        if args.command == "synthetic":
+            parameters = Parameters(**{f.name: getattr(args, f.name) for f in fields(Parameters)})
+            generate_batch(args.out, count=args.count, seed=args.seed, parameters=parameters)
+            print(f"Saved {args.count} cases and manifest.json to {args.out}")
+        elif args.command == "sheet":
             sheet(args.out, args.size, args.layout, args.id)
             print(f"Saved {args.out}. Print at 100%; cut and place as instructed.")
         elif args.command == "measure":
