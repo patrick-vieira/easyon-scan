@@ -25,7 +25,7 @@ keeping their white borders.
 
 Place the cards on all sides so they **surround the entire pattern with clearance**
 on a dark, matte table, with any rotation. No rectangle, tape measure or prescribed spacing is needed. Use four
-or more distinct ArUco DICT_4X4_50 IDs (0–49), all with 90 mm black squares.
+or more distinct ArUco DICT_4X4_50 IDs (0–49), with 90 mm black squares by default (custom sizes below).
 Keep the cards and light paper flat in the **same plane**, with a gap between
 cards and pattern. The complete pattern must sit well inside the markers' convex
 hull (the boundary joining the outermost markers). Contours touching that boundary
@@ -108,10 +108,75 @@ Rejected CLI measurements exit 2 and output JSON with the error and available
 checks; no DXF is exported. The web page displays rejection checks and hints.
 
 Without a profile, an explicit lens warning is always included: some distortion
-can escape consistency checks. Every result warns to physically verify 90 mm
+can escape consistency checks. Every result warns to physically verify the declared sizes of
 cards: uniform printer scaling is unobservable from the photo. Unequal scale,
 nonplanarity and distortion may raise marker residuals but cannot be uniquely
 identified. Passing checks never certifies scale or real-photo accuracy.
+
+### Custom sizes and reusable layouts (SCAN-8)
+
+Declare the **black square** side in millimetres for each nonstandard ID;
+unspecified IDs remain 90 mm. Sizes must be positive and IDs must be 0–49.
+Custom sizes and saved layouts use free mode. Fixed mode retains its original
+90 mm geometry. These options are available in the CLI and Python API; the web
+upload and camera UI retain their default sizes and single-photo workflow.
+
+```sh
+# One page per declared ID, with white borders, size label and 100 mm ruler:
+easyon-scan sheet --marker-size 0=90,1=60 --out mixed-cards.pdf
+# Add --id 1 to print only that ID; A4/A3 cards that do not fit are rejected.
+easyon-scan measure first.jpg --marker-size 0=90,1=60 \
+  --save-layout table.json --out first.dxf
+easyon-scan measure next.jpg --layout-file table.json --out next.dxf
+```
+
+Keep every marker stationary when reusing a layout. Saving records the fitted
+marker poses, not camera coordinates. JSON has `version: 1`, `units: "mm"` and
+`markers`, mapping ID strings to four ordered `[x,y]` black-square corners
+(top-left, top-right, bottom-right, bottom-left in the marker's own orientation).
+It preserves the first calibration's frame and declared sizes across photos.
+Every detected marker must occur in the JSON; conflicting explicit sizes are
+rejected. Single-photo measurements still require four visible markers. Python:
+`measure(image, marker_size={0: 90, 1: 60}, save_layout="table.json")`, then
+`measure(other, layout_file="table.json")`. Results expose `markers` keyed by ID.
+Verify every printed square physically: uniform printer scaling remains invisible.
+
+### Patterns spanning several photos (SCAN-13)
+
+```sh
+easyon-scan measure left.jpg middle.jpg right.jpg \
+  --marker-size 0=90,1=60 --save-layout table.json \
+  --out whole-pattern.dxf --preview stitched.png
+# Reuse the same stationary marker layout with --layout-file table.json.
+```
+
+Each photo needs at least two distinct fully visible markers, and must share
+**at least two IDs with another photo**. The overlap graph must be connected;
+a chain is sufficient. Use distinct IDs for distinct cards throughout the set.
+Keep all cards and paper stationary and coplanar. The union of photos must cover
+the entire marker hull without gaps; surround the complete pattern with cards.
+The pattern may cross individual photo edges, but must leave clearance from
+cards and the outer hull in the combined view. Use consistent diffuse lighting.
+
+`easyon_scan.stitch.stitch([image_a, image_b], marker_size={...})` returns the
+same Measurement type and accepts `profile`, `layout_file` and `save_layout`.
+Registration initializes through shared IDs, then alternates fits of all photo
+homographies and rigid marker poses in one plane, fixing one marker as the frame.
+A saved layout fixes all marker poses instead. `residual_mm` is the RMS Euclidean
+corner discrepancy over **all observations in all photos**; `residual_px` is its
+source-image reprojection counterpart. Per-photo quality checks carry a 1-based `photo`
+index; `joint_marker_consistency_mm` reports the aggregate fit. Per-photo checks and the 2 mm rejection threshold apply; above 1 mm warns.
+
+The aligned images form a 1 pixel/mm light-paper union mosaic (maximum intensity
+in overlaps), and the normal contour/hole extraction merges partial outlines
+there. This can widen edges under misregistration or fill holes under inconsistent
+lighting; inspect the preview. A low residual cannot rule out every marker
+movement or coherent scale error. Mosaics are limited to 40 megapixels and 10 m per
+side. The mosaic sampling adds quantization absent from single-photo subpixel
+measurement. Synthetic tests cover mixed 90/60 mm cards, saved-layout reuse,
+projectively different crops across 2–3 photos, a hole across a photo boundary,
+and insufficient overlap or moved markers. These tests do not validate real-photo
+stitching accuracy.
 
 ### Optional fixed layout
 
@@ -249,9 +314,8 @@ applies to this project's code, not all third-party binary components.
 
 - Validate against measured real phone photographs and publish error distributions.
 - Validate camera profiles and quality-check thresholds on real devices.
-- Support custom marker sizes and persisted layouts.
 - Validate annotation recognition on real photos and AAMA/ASTM-style exports in fashion CAD.
-- Add multi-photo stitching and broader lighting/contrast fixtures.
+- Validate multi-photo stitching on real captures and add broader lighting/contrast fixtures.
 
 ## Provenance and development
 

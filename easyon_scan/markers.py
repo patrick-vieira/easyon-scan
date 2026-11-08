@@ -22,12 +22,43 @@ def corners_mm(marker_id):
     )
 
 
-def sheet(out, size="a4", layout="free", marker_id=None):
+def sheet(out, size="a4", layout="free", marker_id=None, *, marker_size=None):
     """Write one physical-size PDF page, at 10 pixels/mm (254 dpi)."""
     if size not in ("a4", "a3"):
         raise ValueError("Sheet size must be a4 or a3")
     if marker_id is not None and not 0 <= marker_id < 50:
         raise ValueError("Marker ID must be 0–49")
+    if marker_size:
+        from .layout import marker_sizes
+        sizes = marker_sizes(marker_size)
+        if layout != "free":
+            raise ValueError("Custom sizes require free layout")
+        ids = [marker_id] if marker_id is not None else sorted(sizes)
+        w, h = (210, 297) if size == "a4" else (297, 420)
+        pages = []
+        for ident in ids:
+            mm = sizes.get(ident, 90.)
+            if mm > min(w-30, h-80):
+                raise ValueError("Marker with white borders does not fit sheet")
+            page = Image.new("RGB", (w*10,h*10), "white")
+            draw = ImageDraw.Draw(page)
+            pixels = round(mm*10)
+            if pixels < 60:
+                raise ValueError("Printable marker must be at least 6 mm")
+            marker = cv.aruco.generateImageMarker(dictionary(), ident, pixels)
+            page.paste(Image.fromarray(marker).convert("RGB"), (150,150))
+            draw.rectangle((100,100,200+pixels,250+pixels),outline="gray",width=2)
+            try:
+                font = ImageFont.truetype("DejaVuSans.ttf", 29)
+            except OSError:
+                font = ImageFont.load_default(size=29)
+            draw.text((150,170+pixels), f"ID {ident} - {mm:g} mm",fill="black",font=font)
+            draw.text((100,h*10-500), "Print at 100% / actual size. Verify square size.",fill="black",font=font)
+            draw.line((100,h*10-300,1100,h*10-300),fill="black",width=3)
+            draw.text((100,h*10-250), "100 mm - verify / confira",fill="black",font=font)
+            pages.append(page)
+        pages[0].save(Path(out), "PDF", resolution=254., save_all=True, append_images=pages[1:])
+        return
     w, h = (210, 297) if size == "a4" else (297, 420)
     page = Image.new("RGB", (w * 10, h * 10), "white")
     draw = ImageDraw.Draw(page)

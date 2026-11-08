@@ -78,3 +78,16 @@ Reproduce from the repository root:
 ```sh
 python scripts/benchmark.py --count 3 --seed 2026
 ```
+
+## Custom sizes and stitching
+
+The table above remains a single-photo benchmark using default 90 mm cards.
+SCAN-8/SCAN-13 have separate deterministic regression tests in
+`tests/test_layout_stitch.py`: mixed 90/60 mm cards, persisted metric layouts,
+and a rectangle split across two or three projectively transformed crops.
+They require dimension error below 1 mm, area error below 0.5%, and joint marker
+RMS below 0.5 mm. A hole crossing a photo boundary is checked separately.
+Disconnected overlap, only one shared marker and a moved shared card are rejected.
+These fixtures do not extend the benchmark statistics or establish accuracy on
+real photographs. Stitching extracts contours from a 1 pixel/mm light-paper union
+mosaic, so its edge sampling differs from the single-photo benchmark.
