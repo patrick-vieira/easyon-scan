@@ -202,8 +202,13 @@ def generate_fixture(out, sizes=('P', 'M', 'G')):
                         for rank, candidate in enumerate(by_edge.get(source, []), 1)
                         if _same(candidate, pair, 1)]
             rank, candidate = min(matching, key=lambda item: (item[0], item[1]['id'])) if matching else (None, None)
+            tied = [] if candidate is None else sorted({p['id'] for source in (pair['a']['edge_id'], pair['b']['edge_id'])
+                for p in by_edge.get(source, []) if p['score'] == candidate['score']})
             report['pair_diagnostics'].append({'a': pair['a']['edge_id'], 'b': pair['b']['edge_id'],
                 'rank': rank, 'in_top3': rank is not None and rank <= 3,
+                'score': None if candidate is None else candidate['score'],
+                'score_tied_with': [identifier for identifier in tied if identifier != candidate['id']],
+                'rank_rule': 'score_desc_then_id_asc; candidate selected at either edge',
                 'orientation': None if candidate is None else candidate['orientation'],
                 'orientation_correct': candidate is not None and candidate['orientation'] == pair['orientation'],
                 'construction': None if candidate is None else candidate['construction'],

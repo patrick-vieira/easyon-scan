@@ -47,11 +47,16 @@ def sewline_interval_mm(panel, edge):
     start = cut.interpolate(edge['from_mm'])
     end = cut.interpolate(edge['to_mm'])
     a, b = sew.project(start), sew.project(end)
-    # The closing cut vertex has the same coordinates as the first vertex.
-    # Its projection can be zero although this edge follows the final sew arc.
-    if math.isclose(edge['to_mm'], cut.length, abs_tol=1e-7) and b < a:
-        b = sew.length
-    return [min(a, b), max(a, b)]
+    length = sew.length
+    # A closed sewline has two arcs between these projections. Select the
+    # physical arc beside the cut edge, regardless of winding or seam origin.
+    cut_mid = cut.interpolate((edge['from_mm'] + edge['to_mm']) / 2)
+    direct = [min(a, b), max(a, b)]
+    wrapped = [max(a, b), min(a, b) + length]
+    def distance(interval):
+        at = sum(interval) / 2
+        return sew.interpolate(at % length).distance(cut_mid)
+    return min((direct, wrapped), key=lambda interval: (distance(interval), interval[1] - interval[0]))
 
 
 def propose_assembly(doc, *, max_per_edge=3):

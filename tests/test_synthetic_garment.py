@@ -144,3 +144,22 @@ def test_ranking_orders_multiple_intervals_on_same_edge():
         {'id': 'tie', 'a': ref('a', 20), 'b': ref('d', 0), 'score': .9},
     ]
     assert [p['id'] for p in ranked_by_edge(proposals)['a']] == ['high', 'tie', 'low']
+
+
+def test_score_tie_has_deterministic_rank_and_top3_uses_either_edge():
+    def ref(name):
+        return {'edge_id': name, 'start_mm': 0., 'end_mm': 10.}
+    truth = [dict(a=ref('a'), b=ref('b'), orientation='same', construction='plain')]
+    proposals = [dict(id=name, a=ref('a'), b=ref(other), score=.8,
+                      orientation='same', construction='plain')
+                 for name, other in [('aa', 'x'), ('ab', 'y'), ('ac', 'z'), ('hit', 'b')]]
+    proposals += [dict(id=f'b{i}', a=ref('b'), b=ref(f'q{i}'), score=1.,
+                       orientation='same', construction='plain') for i in range(3)]
+    result = evaluate_proposals(list(reversed(proposals)), truth, endpoint_tolerance_mm=0)
+    assert [p['id'] for p in ranked_by_edge(proposals)['a']] == ['aa', 'ab', 'ac', 'hit']
+    assert result['score_ties']['a'][0] == {'score': .8, 'ids': ['aa', 'ab', 'ac', 'hit']}
+    assert result['rank_rule'].endswith('either edge')
+    assert result['top1']['geometry_tp'] == 0
+    assert result['top3']['geometry_tp'] == 0  # hit ranks fourth on a and b.
+    promoted = evaluate_proposals([p for p in proposals if p['id'] != 'b2'], truth, endpoint_tolerance_mm=0)
+    assert promoted['top3']['geometry_tp'] == 1  # b now ranks hit third.
