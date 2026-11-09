@@ -95,6 +95,51 @@ def test_sewlines():
     assert not [i for i in validate_assembly(assembly) if i['level'] == 'error']
 
 
+def test_synthetic_astm_blocks_and_size_selection():
+    doc = ezdxf.new()
+    doc.units = 4
+    for name, x in [('M', 0), ('L', 200)]:
+        block = doc.blocks.new(f'PANEL_{name}')
+        block.add_lwpolyline([(0, 0), (100, 0), (100, 100), (0, 100)], close=True,
+                             dxfattribs={'layer': '1'})
+        block.add_lwpolyline([(10, 10), (90, 10), (90, 90), (10, 90)], close=True,
+                             dxfattribs={'layer': '14'})
+        for layer, y in [('4', 10), ('80', 25), ('81', 40), ('82', 55), ('83', 70)]:
+            block.add_point((100, y), dxfattribs={'layer': layer})
+        for value in ('Piece Name: Front', f'Size Name: {name}', 'Quantity: 2', 'Fold:Y'):
+            block.add_text(value)
+        block.add_line((0, 20), (0, 80), dxfattribs={'layer': '6'})
+        block.add_line((20, 20), (30, 30), dxfattribs={'layer': '8'})
+        block.add_point((30, 30), dxfattribs={'layer': '13'})
+        block.add_text('plot note', dxfattribs={'layer': '15'})
+        doc.modelspace().add_blockref(block.name, (x, 0))
+    raw = encoded(doc)
+    with pytest.raises(ValueError, match='one size per file in v0'):
+        dxf_to_assembly(raw)
+    assembly = dxf_to_assembly(raw, size='M')
+    assert len(assembly['panels']) == 1
+    panel = assembly['panels'][0]
+    assert panel['name'] == 'Front'
+    assert panel['quantity'] == '2'
+    assert panel['on_fold'] is True
+    assert panel['sewline_status'] == 'from_dxf'
+    assert {n['kind'] for edge in panel['edges'] for n in edge['notches']} == {
+        'v_slit', 't', 'castle', 'check', 'u'}
+    assert validate_assembly(assembly) == [dict(level='warning', code='grain_missing',
+        panel='panel-1', message='Grain direction is undefined')]
+
+
+def test_fold_requires_text_not_layer_six():
+    doc = ezdxf.new()
+    doc.units = 4
+    block = doc.blocks.new('PANEL')
+    block.add_lwpolyline([(0, 0), (100, 0), (100, 100), (0, 100)], close=True,
+                         dxfattribs={'layer': '1'})
+    block.add_line((0, 0), (0, 100), dxfattribs={'layer': '6'})
+    doc.modelspace().add_blockref('PANEL', (0, 0))
+    assert dxf_to_assembly(encoded(doc))['panels'][0]['on_fold'] is False
+
+
 def test_validation():
     assembly = dxf_to_assembly(dxf_bytes(synthetic()))
     bad = copy.deepcopy(assembly)

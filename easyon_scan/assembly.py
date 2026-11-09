@@ -2,6 +2,7 @@
 import hashlib
 import base64
 import math
+import re
 from pathlib import Path
 
 import ezdxf
@@ -41,8 +42,8 @@ def _edges(ring, marks, panel_id, provenance):
         norm = math.hypot(*u) * math.hypot(*v)
         if norm and math.degrees(math.acos(max(-1., min(1., sum(a*b for a,b in zip(u,v))/norm)))) >= CORNER_DEGREES:
             cuts.add(distances[i])
-    projected = [line.project(Point(p)) for p in marks]
-    cuts.update(projected)
+    projected = [(line.project(Point(p)), kind) for p, kind in marks]
+    cuts.update(s for s, _ in projected)
     # Insert projected notch vertices so edge indices refer to the output ring.
     positions = sorted(set(distances) | cuts)
     vertices = [list(line.interpolate(s).coords[0]) for s in positions]
@@ -53,7 +54,7 @@ def _edges(ring, marks, panel_id, provenance):
         if end-start < 1e-8:
             continue
         # A boundary notch belongs to the following edge, except at closure.
-        notches = [dict(at_mm=s-start, kind='notch') for s in projected
+        notches = [dict(at_mm=s-start, kind=kind) for s, kind in projected
                    if start <= s < end or (end == line.length and s == end)]
         edges.append(dict(id=f'{panel_id}:e{len(edges)+1}', from_mm=start, to_mm=end,
                           length_mm=end-start, start_vertex=indices[start],
@@ -83,6 +84,8 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
     if seam_allowance_mm is not None and (not math.isfinite(seam_allowance_mm) or seam_allowance_mm <= 0):
         raise ValueError('seam_allowance_mm must be finite and positive')
     records, annotations, labels = [], [], {}
+    notch_layers = {'NOTCH': 'notch', '4': 'v_slit', '80': 't',
+                    '81': 'castle', '82': 'check', '83': 'u'}
 
     def collect(space, scope='model', matrix=None):
         for entity in space:
@@ -93,11 +96,13 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
                 for insert in entity.multi_insert() if entity.mcount > 1 else [entity]:
                     collect(insert.block(), f'insert:{insert.dxf.handle}', insert.matrix44())
                 continue
-            if kind == 'TEXT':
-                text = entity.dxf.text
-                for prefix, key in [('Piece Name:', 'name'), ('Size:', 'size')]:
-                    if text.startswith(prefix):
-                        labels.setdefault(scope, {})[key] = text[len(prefix):].strip()
+            if kind in ('TEXT', 'MTEXT'):
+                value = entity.dxf.text if kind == 'TEXT' else entity.plain_text()
+                match = re.match(r'^\s*(Piece Name|Size Name|Size|Quantity|Fold)\s*:\s*(.*?)\s*$', value, re.I)
+                if match:
+                    key = {'piece name': 'name', 'size name': 'size', 'size': 'size',
+                           'quantity': 'quantity', 'fold': 'fold'}[match[1].lower()]
+                    labels.setdefault(scope, {})[key] = match[2]
                 continue
             if kind not in ('LWPOLYLINE', 'POLYLINE', 'SPLINE', 'ARC', 'CIRCLE', 'LINE', 'POINT'):
                 continue
@@ -109,10 +114,10 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
             if not points:
                 continue
             layer = entity.dxf.layer.upper()
-            if layer in ('INTERNAL', '8'):
+            if layer in ('INTERNAL', '8', '13', '15'):
                 continue
             record = dict(points=points, scope=scope, provenance=_provenance(entity), layer=layer)
-            if layer in ('NOTCH', '4', 'GRAIN', '7'):
+            if layer in (*notch_layers, 'GRAIN', '7'):
                 annotations.append(record)
             elif kind in ('LWPOLYLINE', 'POLYLINE', 'SPLINE', 'CIRCLE'):
                 closed = (kind == 'CIRCLE' or bool(getattr(entity, 'closed', False)) or
@@ -123,8 +128,16 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
                     record['polygon'] = Polygon(points)
                     records.append(record)
     collect(doc.modelspace())
-    sew_layers = {'SEWLINE', 'SEW', 'STITCH', 'STITCHLINE'}
-    outlines = [r for r in records if r['layer'] not in sew_layers]
+    sew_layers = {'SEWLINE', 'SEW', 'STITCH', 'STITCHLINE', '14'}
+    outlines = [r for r in records if r['layer'] not in sew_layers and r['layer'] != '11']
+    sizes = {label['size'] for label in labels.values() if label.get('size')}
+    if len(sizes) > 1 and size is None:
+        raise ValueError('Multiple Size Name labels: one size per file in v0; select --size')
+    if size is not None and sizes and size not in sizes:
+        raise ValueError('Requested size does not match DXF size labels')
+    if size is not None:
+        outlines = [r for r in outlines if not labels.get(r['scope'], {}).get('size')
+                    or labels[r['scope']]['size'] == size]
     panels = []
     for record in outlines:
         poly = record['polygon']
@@ -135,19 +148,20 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
         if parents:
             continue
         pid = f'panel-{len(panels)+1}'
-        holes = [r['points'] for r in outlines if r is not record and r['scope'] == record['scope']
+        holes = [r['points'] for r in records if r is not record and r['scope'] == record['scope']
+                 and r['layer'] not in sew_layers
                  and poly.is_valid and r['polygon'].is_valid and poly.contains(r['polygon'])]
         relevant = [a for a in annotations if a['scope'] == record['scope']]
         marks, grain = [], None
         for a in relevant:
             pts = a['points']
-            if a['layer'] in ('NOTCH', '4'):
+            if a['layer'] in notch_layers:
                 # Plain notch triangles: base, tip, base, closure.
                 p = pts[0] if len(pts) == 1 else [(pts[0][k]+pts[2][k])/2 for k in (0,1)]
                 nearest = min((r for r in outlines if r['scope'] == record['scope']),
                               key=lambda r: LineString(r['points']).distance(Point(p)))
                 if nearest is record:
-                    marks.append(p)
+                    marks.append((p, notch_layers[a['layer']]))
             elif poly.is_valid and poly.covers(Point(pts[0])) and len(pts) >= 2:
                 # Longest pair captures the axis of the exported ink arrow.
                 a0, b0 = max(((a,b) for a in pts for b in pts), key=lambda pair: math.dist(*pair))
@@ -167,14 +181,12 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
             if offset.is_empty or offset.geom_type != 'Polygon':
                 raise ValueError('Allowance produces an empty or disconnected sewline')
             sewline, status = [list(p) for p in offset.exterior.coords], 'hypothesis_offset'
-        panels.append(dict(id=pid, name=labels.get(record['scope'], {}).get('name', record['provenance']['layer']),
+        label = labels.get(record['scope'], {})
+        panels.append(dict(id=pid, name=label.get('name', record['provenance']['layer']),
                            cutline=ring, sewline=sewline, sewline_status=status, grain=grain,
-                           on_fold=False, holes=holes, edges=edges, provenance=record['provenance']))
-    sizes = {label['size'] for label in labels.values() if 'size' in label}
-    if size is None and len(sizes) > 1:
-        raise ValueError('Multiple DXF sizes: select a single-size input explicitly')
-    if size is not None and sizes and sizes != {size}:
-        raise ValueError('Requested size does not match DXF size labels')
+                           on_fold=label.get('fold', '').upper() == 'Y', holes=holes,
+                           edges=edges, provenance=record['provenance'],
+                           **({'quantity': label['quantity']} if 'quantity' in label else {})))
     result = dict(schema='garment-assembly/v0', source=dict(file_sha256=hashlib.sha256(raw).hexdigest(),
                   units=units, insunits_code=code, size=size if size is not None else next(iter(sizes), None)),
                   panels=panels, seams=[], openings=[], review=dict(status='pending', reviewer=None, notes=[]))
