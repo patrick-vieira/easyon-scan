@@ -604,3 +604,12 @@ Unitless DXF requires an explicit `--assume-units mm|cm|in` declaration.
 See [garment-assembly/v0](docs/garment-assembly-v0.md) for the format and limits.
 Seams are proposals for human review; this adapter emits no seams and review is pending.
 Optional allowance offsets are marked hypotheses. Nothing here is 3D yet.
+
+### Review-only seam suggestions
+
+`easyon-scan propose assembly.json --out proposals.json` adds lateral
+`proposals[]` and a `none_option` for each eligible edge to a v0 document.
+`seams` and `review` are unchanged. Scores are **review priority**, not calibrated
+confidence. Missing or hypothetical sewlines leave cutline length as triage only;
+construction remains unknown. The tool rejects uncertain units and invalid
+assemblies, and never treats DXF layout proximity as assembly evidence.
