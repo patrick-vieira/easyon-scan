@@ -9,7 +9,7 @@ from shapely.geometry import LineString
 
 from .assembly import dxf_to_assembly, validate_assembly
 from .assembly_v1 import _digest, migrate_v0, validate_assembly_v1
-from .assembly_eval import _same, evaluate_proposals
+from .assembly_eval import _same, evaluate_proposals, ranked_by_edge
 from .propose import propose_assembly
 
 # Explicit fixture table, not a size grading rule or real-body measurements.
@@ -85,6 +85,8 @@ def _truth(assembly):
                     axis == 'horizontal' and abs(start.y - end.y) < 1e-6):
                 found.append((min(start.x, end.x) if axis == 'vertical' else min(start.y, end.y), index))
         found.sort()
+        if len(found) < 2:
+            raise ValueError(f'Nonparallel seam edge in {name}')
         return found[0 if first else -1][1]
     sl_right = edge_index('Side Left', 'vertical', False)
     sl_left = edge_index('Side Left', 'vertical', True)
@@ -94,6 +96,25 @@ def _truth(assembly):
     shl_top = edge_index('Shoulder Left', 'horizontal', False)
     shr_bottom = edge_index('Shoulder Right', 'horizontal', True)
     shr_top = edge_index('Shoulder Right', 'horizontal', False)
+    # The body edge indices are part of this fixture's topology contract.
+    for name in ('Front', 'Back'):
+        panel = panels[name]
+        line = LineString(panel['cutline'])
+        left = min(x for x, _ in panel['cutline'])
+        right = max(x for x, _ in panel['cutline'])
+        bottom = min(y for _, y in panel['cutline'])
+        top = max(y for _, y in panel['cutline'])
+        middle = (left + right) / 2
+        expected = {3: ((right, bottom), (right, top)),
+                    4: ((right, top), (middle, top)),
+                    5: ((middle, top), (left, top)),
+                    6: ((left, top), (left, bottom))}
+        for index, (first, last) in expected.items():
+            edge = panel['edges'][index - 1]
+            start, end = (line.interpolate(edge[key]) for key in ('from_mm', 'to_mm'))
+            if max(abs(start.x - first[0]), abs(start.y - first[1]),
+                   abs(end.x - last[0]), abs(end.y - last[1])) > 1e-6:
+                raise ValueError(f'Unexpected body edge position: {name}/e{index}')
     pairs = [('Front', 6, 'Side Left', sl_right), ('Back', 6, 'Side Left', sl_left),
              ('Front', 3, 'Side Right', sr_left), ('Back', 3, 'Side Right', sr_right),
              ('Front', 5, 'Shoulder Left', shl_top), ('Back', 5, 'Shoulder Left', shl_bottom),
@@ -135,18 +156,27 @@ def generate_fixture(out, sizes=('P', 'M', 'G')):
         if errors:
             raise ValueError(f'Invalid synthetic v0: {errors}')
         truth = _truth(v0)
-        proposed = propose_assembly(v0)
+        proposed = propose_assembly(v0, max_per_edge=None)
         v1 = migrate_v0(v0)
         edge_map = {e['id']: e for panel in v1['panels'] for e in panel['edges']}
         for pair in truth:
             for ref in (pair['a'], pair['b']):
-                edge_map[ref['edge_id']]['sewline_interval_mm'] = [0., ref['end_mm']]
+                edge = edge_map[ref['edge_id']]
+                panel = next(p for p in v1['panels'] if edge in p['edges'])
+                cut, sew = LineString(panel['cutline']), LineString(panel['sewline'])
+                start = sew.project(cut.interpolate(edge['from_mm']))
+                end = sew.project(cut.interpolate(edge['to_mm']))
+                edge['sewline_interval_mm'] = sorted((start, end))
         for index, pair in enumerate(truth, 1):
             a, b = pair['a'], pair['b']
             matches = [{'a_mm': 0., 'b_mm': b['end_mm'] if pair['orientation'] == 'reversed' else 0.},
                        {'a_mm': a['end_mm'], 'b_mm': 0. if pair['orientation'] == 'reversed' else b['end_mm']}]
+            def sew_length(ref):
+                edge = edge_map[ref['edge_id']]
+                lo, hi = edge['sewline_interval_mm']
+                return (hi - lo) * (ref['end_mm'] - ref['start_mm']) / edge['length_mm']
             proposal = dict(id=f'fixture:{index}', **pair, matches=matches, allowance_mm={'a': None, 'b': None},
-                            ease_mm=0., score=1., signals=[], model_version='synthetic-truth/v1',
+                            ease_mm=sew_length(a) - sew_length(b), score=1., signals=[], model_version='synthetic-truth/v1',
                             created_at=None, status='proposed')
             proposal['content_sha256'] = _digest(proposal)
             v1['proposals'].append(proposal)
@@ -165,16 +195,13 @@ def generate_fixture(out, sizes=('P', 'M', 'G')):
                        'b': {'edge_id': p['b'], 'start_mm': 0., 'end_mm': next(e['length_mm'] for q in v0['panels'] for e in q['edges'] if e['id'] == p['b'])},
                        'orientation': p['orientation'], 'construction': p['construction'], 'score': p['score']} for p in candidates]
         report = evaluate_proposals(normalized, truth, endpoint_tolerance_mm=1)
-        ranked = sorted(normalized, key=lambda p: (-p['score'], p['id']))
-        by_source = {}
-        for candidate in ranked:
-            by_source.setdefault(candidate['a']['edge_id'], []).append(candidate)
+        by_edge = ranked_by_edge(normalized)
         report['pair_diagnostics'] = []
         for pair in truth:
             matching = [(rank, candidate) for source in (pair['a']['edge_id'], pair['b']['edge_id'])
-                        for rank, candidate in enumerate(by_source.get(source, []), 1)
+                        for rank, candidate in enumerate(by_edge.get(source, []), 1)
                         if _same(candidate, pair, 1)]
-            rank, candidate = min(matching, key=lambda item: item[0]) if matching else (None, None)
+            rank, candidate = min(matching, key=lambda item: (item[0], item[1]['id'])) if matching else (None, None)
             report['pair_diagnostics'].append({'a': pair['a']['edge_id'], 'b': pair['b']['edge_id'],
                 'rank': rank, 'in_top3': rank is not None and rank <= 3,
                 'orientation': None if candidate is None else candidate['orientation'],

@@ -60,7 +60,7 @@ def test_evaluation_denominators_and_tolerance():
     good = dict(truth[0], id='good', score=.8)
     wrong = dict(a=ref('a'), b=ref('c'), orientation='same', construction='plain', id='wrong', score=.9)
     report = evaluate_proposals([wrong, good], truth, endpoint_tolerance_mm=1, review_seconds=[10, 20])
-    assert report['top1']['predicted'] == 1 and report['top1']['precision'] == 0
+    assert report['top1']['predicted'] == 2 and report['top1']['geometry_tp'] == 1
     assert report['top3']['truth'] == 1 and report['top3']['recall'] == 1
     assert report['review_seconds']['median'] == 15
 
