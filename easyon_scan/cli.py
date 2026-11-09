@@ -58,6 +58,9 @@ def main():
         p.add_argument("--" + field.name.replace("_", "-"),
                        type=int if field.name in ("jpeg_quality", "annotations") else float,
                        default=field.default)
+    p = commands.add_parser("synthetic-garment", help="Generate synthetic garment DXF and assembly fixture")
+    p.add_argument("--out", required=True)
+    p.add_argument("--sizes", default="P,M,G", help="Comma-separated subset of P,M,G")
     p = commands.add_parser("assembly", help="Convert DXF to experimental garment assembly v0")
     p.add_argument("file")
     p.add_argument("--out", required=True)
@@ -76,7 +79,11 @@ def main():
     p.add_argument("--json", action="store_true", help="Output as JSON instead of human-readable text")
     args = parser.parse_args()
     try:
-        if args.command == "validate":
+        if args.command == "synthetic-garment":
+            from .synthetic_garment import generate_fixture
+            generate_fixture(args.out, tuple(args.sizes.split(",")))
+            print(f"Saved synthetic garment fixture to {args.out}")
+        elif args.command == "validate":
             from pathlib import Path
             from .assembly import validate_assembly
             try:

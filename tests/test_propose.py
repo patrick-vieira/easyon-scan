@@ -4,9 +4,11 @@ import io
 
 import ezdxf
 import pytest
+from shapely.geometry import LineString
 
 from easyon_scan.assembly import dxf_to_assembly
-from easyon_scan.propose import propose_assembly
+from easyon_scan.propose import propose_assembly, sewline_interval_mm, _sew_length
+from easyon_scan.synthetic_garment import _dxf, MEASURES_MM
 
 
 def sample():
@@ -68,3 +70,35 @@ def test_asymmetric_notches_orientation():
     pair = next(p for p in result['proposals'] if {p['a'], p['b']} == {a['id'], b['id']})
     assert pair['orientation'] == 'reversed'
     assert len(pair['matches']) == 4
+
+
+@pytest.mark.parametrize('size', ('P', 'M', 'G'))
+@pytest.mark.parametrize('reverse,offset', ((False, 0), (True, 0), (False, 1), (True, 2), (False, 'mid'), (True, 'mid')))
+def test_sew_arc_uses_physical_edge_with_reversed_and_shifted_origin(size, reverse, offset):
+    panels = dxf_to_assembly(_dxf(size), size=size)['panels']
+    measures = MEASURES_MM[size]
+    expected = {'Front': {3: measures['body_height'] - 16, 6: measures['body_height'] - 16,
+                          4: measures['body_width']/2 - 8, 5: measures['body_width']/2 - 8},
+                'Side Left': {2: measures['body_height'] - 16, 4: measures['body_height'] - 16},
+                'Shoulder Left': {1: measures['shoulder_width']/2 - 8,
+                                  3: measures['shoulder_width']/2 - 8}}
+    for panel in panels:
+        if panel['name'] not in expected:
+            continue
+        vertices = panel['sewline'][:-1]
+        if reverse:
+            vertices = list(reversed(vertices))
+        if offset == 'mid':
+            midpoint = [(vertices[1][0] + vertices[2][0])/2,
+                        (vertices[1][1] + vertices[2][1])/2]
+            vertices = [midpoint] + vertices[2:] + vertices[:2] + [vertices[1]]
+        else:
+            vertices = vertices[offset:] + vertices[:offset]
+        panel['sewline'] = vertices + vertices[:1]
+        for index, length in expected[panel['name']].items():
+            edge = panel['edges'][index - 1]
+            lo, hi = sewline_interval_mm(panel, edge)
+            assert hi - lo == pytest.approx(length)
+            assert _sew_length(panel, edge) == pytest.approx(length)
+            if panel['name'] == 'Front' and index == 3 and offset == 'mid' and not reverse:
+                assert hi > LineString(panel['sewline']).length

@@ -36,17 +36,34 @@ def _notches(edge, reverse=False):
 def _sew_length(panel, edge):
     if panel['sewline_status'] != 'from_dxf':
         return None
+    interval = sewline_interval_mm(panel, edge)
+    return interval[1] - interval[0] if interval[1] > interval[0] else None
+
+
+def sewline_interval_mm(panel, edge):
+    """Project an oriented cut edge onto its corresponding measured sew arc."""
     cut = LineString(panel['cutline'])
     sew = LineString(panel['sewline'])
     start = cut.interpolate(edge['from_mm'])
     end = cut.interpolate(edge['to_mm'])
     a, b = sew.project(start), sew.project(end)
-    distance = abs(b - a)
-    return distance if distance > 0 else None
+    length = sew.length
+    # A closed sewline has two arcs between these projections. Select the
+    # physical arc beside the cut edge, regardless of winding or seam origin.
+    cut_mid = cut.interpolate((edge['from_mm'] + edge['to_mm']) / 2)
+    direct = [min(a, b), max(a, b)]
+    wrapped = [max(a, b), min(a, b) + length]
+    def distance(interval):
+        at = sum(interval) / 2
+        return sew.interpolate(at % length).distance(cut_mid)
+    return min((direct, wrapped), key=lambda interval: (distance(interval), interval[1] - interval[0]))
 
 
-def propose_assembly(doc):
-    """Return v0 plus lateral proposals; scores are review priority, not probability."""
+def propose_assembly(doc, *, max_per_edge=3):
+    """Return v0 plus lateral proposals; scores are review priority, not probability.
+
+    Set max_per_edge=None to retain the full candidate pool for ranking evaluation.
+    """
     if doc.get('schema') != 'garment-assembly/v0' or 'proposals' in doc:
         raise ValueError('Expected an unmodified garment-assembly/v0 document')
     base = copy.deepcopy(doc)
@@ -115,10 +132,12 @@ def propose_assembly(doc):
                 matches.sort(key=lambda x: x['a_mm'])
             candidates.append(dict(id=f'proposal:{a["id"]}:{b["id"]}', a=a['id'], b=b['id'], orientation=orientation, matches=matches, construction=None, score=round(score, 6), score_label='review_priority', signals=signals, model_version=MODEL_VERSION, status='proposed'))
     candidates.sort(key=lambda p: (-p['score'], p['a'], p['b']))
+    if max_per_edge is not None and (not isinstance(max_per_edge, int) or max_per_edge < 1):
+        raise ValueError('max_per_edge must be positive or None')
     counts = {e['id']: 0 for _, e in entries}
     selected = []
     for proposal in candidates:
-        if counts[proposal['a']] < 3 and counts[proposal['b']] < 3:
+        if max_per_edge is None or (counts[proposal['a']] < max_per_edge and counts[proposal['b']] < max_per_edge):
             selected.append(proposal)
             counts[proposal['a']] += 1
             counts[proposal['b']] += 1
