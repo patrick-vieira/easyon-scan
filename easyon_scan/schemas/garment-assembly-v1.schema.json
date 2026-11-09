@@ -1,0 +1,734 @@
+{
+  "type": "object",
+  "required": [
+    "schema",
+    "source",
+    "panels",
+    "seams",
+    "openings",
+    "review",
+    "landmarks",
+    "proposals",
+    "operations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "garment-assembly/v1"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "file_sha256",
+        "units",
+        "insunits_code",
+        "size"
+      ],
+      "properties": {
+        "file_sha256": {
+          "type": "string",
+          "pattern": "[0-9a-f]{64}"
+        },
+        "units": {
+          "type": "string"
+        },
+        "insunits_code": {
+          "type": "integer"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assumed_units": {
+          "enum": [
+            "mm",
+            "cm",
+            "in",
+            "ft",
+            "m"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "panels": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/panel"
+      }
+    },
+    "seams": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/seam"
+      }
+    },
+    "openings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "edges",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "status",
+        "reviewer",
+        "notes",
+        "decisions"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "pending",
+            "human_approved",
+            "rejected"
+          ]
+        },
+        "reviewer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "proposal_id",
+              "action",
+              "before_sha256",
+              "reviewer",
+              "at",
+              "reason"
+            ],
+            "properties": {
+              "proposal_id": {
+                "type": "string"
+              },
+              "operation_id": {
+                "type": "string"
+              },
+              "panel_id": {
+                "type": "string"
+              },
+              "action": {
+                "enum": [
+                  "accept",
+                  "reject",
+                  "defer",
+                  "confirm_operation",
+                  "close_panel"
+                ]
+              },
+              "before_sha256": {
+                "type": "string"
+              },
+              "reviewer": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "after": {}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "a",
+          "b",
+          "orientation",
+          "matches",
+          "construction",
+          "allowance_mm",
+          "ease_mm",
+          "id",
+          "score",
+          "signals",
+          "model_version",
+          "created_at",
+          "status",
+          "content_sha256"
+        ],
+        "properties": {
+          "a": {
+            "$ref": "#/$defs/segment_ref"
+          },
+          "b": {
+            "$ref": "#/$defs/segment_ref"
+          },
+          "orientation": {
+            "enum": [
+              "same",
+              "reversed",
+              "unknown"
+            ]
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "a_mm",
+                "b_mm"
+              ],
+              "properties": {
+                "a_mm": {
+                  "type": "number"
+                },
+                "b_mm": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "construction": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "allowance_mm": {
+            "type": "object",
+            "required": [
+              "a",
+              "b"
+            ],
+            "properties": {
+              "a": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "b": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "ease_mm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "kind",
+                "source",
+                "raw",
+                "contribution"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "raw": {},
+                "contribution": {
+                  "type": "number"
+                },
+                "warning": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "model_version": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "const": "proposed"
+          },
+          "content_sha256": {
+            "type": "string",
+            "pattern": "[0-9a-f]{64}"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "landmarks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "origin",
+          "kind",
+          "position_mm"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "dxf",
+              "techpack",
+              "human"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "position_mm": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "segments"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "dart",
+              "pleat",
+              "gather",
+              "hem",
+              "binding",
+              "zipper",
+              "lining_join",
+              "fold"
+            ]
+          },
+          "segments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/segment_ref"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easyon-scan.org/schemas/garment-assembly-v1.schema.json",
+  "$defs": {
+    "ring": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "minItems": 2,
+        "maxItems": 2
+      },
+      "minItems": 4
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "handle",
+        "layer",
+        "dxftype"
+      ],
+      "properties": {
+        "handle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layer": {
+          "type": "string"
+        },
+        "dxftype": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": [
+        "id",
+        "from_mm",
+        "to_mm",
+        "length_mm",
+        "start_vertex",
+        "end_vertex",
+        "notches",
+        "provenance",
+        "semantic_label",
+        "sewline_interval_mm"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "from_mm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "to_mm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "length_mm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "start_vertex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_vertex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "notches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "at_mm",
+              "kind"
+            ],
+            "properties": {
+              "at_mm": {
+                "type": "number",
+                "minimum": 0
+              },
+              "kind": {
+                "enum": [
+                  "notch",
+                  "v_slit",
+                  "t",
+                  "castle",
+                  "check",
+                  "u"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "semantic_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sewline_interval_mm": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "panel": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "cutline",
+        "sewline",
+        "sewline_status",
+        "grain",
+        "on_fold",
+        "holes",
+        "edges",
+        "provenance",
+        "role"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "cutline": {
+          "$ref": "#/$defs/ring"
+        },
+        "sewline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ring"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sewline_status": {
+          "enum": [
+            "from_dxf",
+            "hypothesis_offset",
+            "missing"
+          ]
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "on_fold": {
+          "type": "boolean"
+        },
+        "quantity": {
+          "type": "string"
+        },
+        "holes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ring"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge"
+          }
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "role": {
+          "enum": [
+            "shell",
+            "lining",
+            "interfacing",
+            "unknown"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "seam": {
+      "type": "object",
+      "required": [
+        "a",
+        "b",
+        "orientation",
+        "matches",
+        "construction",
+        "allowance_mm",
+        "ease_mm",
+        "id",
+        "proposal_id"
+      ],
+      "properties": {
+        "a": {
+          "$ref": "#/$defs/segment_ref"
+        },
+        "b": {
+          "$ref": "#/$defs/segment_ref"
+        },
+        "orientation": {
+          "enum": [
+            "same",
+            "reversed",
+            "unknown"
+          ]
+        },
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "a_mm",
+              "b_mm"
+            ],
+            "properties": {
+              "a_mm": {
+                "type": "number"
+              },
+              "b_mm": {
+                "type": "number"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "construction": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allowance_mm": {
+          "type": "object",
+          "required": [
+            "a",
+            "b"
+          ],
+          "properties": {
+            "a": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "b": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "ease_mm": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "proposal_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "segment_ref": {
+      "type": "object",
+      "required": [
+        "edge_id",
+        "start_mm",
+        "end_mm"
+      ],
+      "properties": {
+        "edge_id": {
+          "type": "string"
+        },
+        "start_mm": {
+          "type": "number"
+        },
+        "end_mm": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

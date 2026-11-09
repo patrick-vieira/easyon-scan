@@ -605,6 +605,23 @@ See [garment-assembly/v0](docs/garment-assembly-v0.md) for the format and limits
 Seams are proposals for human review; this adapter emits no seams and review is pending.
 Optional allowance offsets are marked hypotheses. Nothing here is 3D yet.
 
+### DXF inventory diagnostic (SCAN-29)
+
+Preview how a DXF will be interpreted before conversion to garment-assembly/v0:
+
+```sh
+easyon-scan dxf-inventory pattern.dxf
+easyon-scan dxf-inventory pattern.dxf --json > inventory.json
+```
+
+The report shows:
+- **Units**: `$INSUNITS` code and name (unitless, mm, cm, in, ft, m, or unknown)
+- **Blocks**: INSERT references in modelspace with insertion counts
+- **Layers**: entity counts by type; closed vs open polylines/splines
+- **Texts**: recognized labels (Piece Name, Size Name, Size, Quantity, Fold) per block scope
+- **Classification**: how each layer is treated (cutline, sewline, notch, grain, hole-candidate, ignored, unknown)
+
+This diagnostic helps identify why geometry may be ignored or misclassified during assembly conversion. See [garment-assembly/v0](docs/garment-assembly-v0.md) for the layer and text policy.
 ### Validate assembly documents
 
 ```sh

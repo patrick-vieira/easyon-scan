@@ -71,6 +71,9 @@ def main():
     p = commands.add_parser("validate", help="Validate a garment assembly v0 JSON file")
     p.add_argument("file")
     p.add_argument("--json", action="store_true", help="Output JSON instead of human-readable format")
+    p = commands.add_parser("dxf-inventory", help="Diagnostic report of a DXF file before garment-assembly conversion")
+    p.add_argument("file")
+    p.add_argument("--json", action="store_true", help="Output as JSON instead of human-readable text")
     args = parser.parse_args()
     try:
         if args.command == "validate":
@@ -96,6 +99,11 @@ def main():
                 print(f"{len(errors)} errors, {len(warnings)} warnings")
             if errors:
                 parser.exit(1)
+        elif args.command == "dxf-inventory":
+            from pathlib import Path
+            from .dxf_inventory import inventory
+            result = inventory(args.file, json_output=args.json)
+            print(result)
         elif args.command == "propose":
             from pathlib import Path
             from .propose import propose_assembly
