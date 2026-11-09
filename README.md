@@ -622,6 +622,19 @@ The report shows:
 - **Classification**: how each layer is treated (cutline, sewline, notch, grain, hole-candidate, ignored, unknown)
 
 This diagnostic helps identify why geometry may be ignored or misclassified during assembly conversion. See [garment-assembly/v0](docs/garment-assembly-v0.md) for the layer and text policy.
+### Validate assembly documents
+
+```sh
+easyon-scan validate assembly.json
+easyon-scan validate assembly.json --json
+```
+
+The `validate` command checks a garment-assembly/v0 JSON file for structural
+and geometric validity. It returns exit code 1 if any errors are found,
+0 if only warnings or no issues. Without `--json`, it prints one line per issue
+and a summary (e.g., "2 errors, 1 warnings"). With `--json`, it prints
+`{"valid": bool, "issues": [...]}` where each issue has `level` (error/warning),
+`code`, `panel` (optional), and `message`.
 
 ### Review-only seam suggestions
 
