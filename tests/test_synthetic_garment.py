@@ -4,10 +4,11 @@ import json
 
 import pytest
 import ezdxf
+from shapely.geometry import LineString
 
 from easyon_scan.assembly_eval import evaluate_proposals, ranked_by_edge
 
-from easyon_scan.synthetic_garment import MEASURES_MM, _truth, generate_fixture
+from easyon_scan.synthetic_garment import MEASURES_MM, _rotate_sewline_away_from_seams, _truth, generate_fixture
 from easyon_scan.assembly_v1 import validate_assembly_v1
 
 
@@ -60,8 +61,8 @@ def test_fixture_is_deterministic_and_importable(tmp_path):
             assert seam['ease_mm'] == pytest.approx(0)
         width, height = MEASURES_MM[size]['body_width'], MEASURES_MM[size]['body_height']
         side = MEASURES_MM[size]['side_width']
-        assert edges['panel-1:e6'][1]['sewline_interval_mm'] == pytest.approx([2*width + height - 48, 2*width + 2*height - 64])
-        assert edges['panel-3:e4'][1]['sewline_interval_mm'] == pytest.approx([2*side + height - 48, 2*side + 2*height - 64])
+        assert edges['panel-1:e6'][1]['sewline_interval_mm'] == pytest.approx([2*width + height - 48 - (width/4 - 8), 2*width + 2*height - 64 - (width/4 - 8)])
+        assert edges['panel-3:e4'][1]['sewline_interval_mm'] == pytest.approx([2*side + height - 48 - (side/2 - 8), 2*side + 2*height - 64 - (side/2 - 8)])
         assert lengths[-1] == pytest.approx(width/2 - 8)
         assert edges['panel-1:e3'][1]['sewline_interval_mm'][1] - edges['panel-1:e3'][1]['sewline_interval_mm'][0] < MEASURES_MM[size]['body_height']
         assert report['top3']['geometry_tp'] >= report['top1']['geometry_tp']
@@ -92,6 +93,50 @@ def test_truth_rejects_swapped_shoulder_edge(tmp_path):
             panel['edges'][0]['length_mm'] += 10
     with pytest.raises(ValueError, match='Incompatible seam lengths'):
         _truth(v0)
+
+
+@pytest.mark.parametrize('size', ('P', 'M', 'G'))
+def test_v1_serializes_reversed_mid_edge_sewline(size, tmp_path, monkeypatch):
+    import easyon_scan.synthetic_garment as fixture
+    original = fixture.dxf_to_assembly
+
+    def shifted(raw, **kwargs):
+        doc = original(raw, **kwargs)
+        for panel in doc['panels']:
+            vertices = list(reversed(panel['sewline'][:-1]))
+            midpoint = [(vertices[1][axis] + vertices[2][axis]) / 2 for axis in (0, 1)]
+            panel['sewline'] = [midpoint] + vertices[2:] + vertices[:2] + [midpoint]
+        return doc
+
+    monkeypatch.setattr(fixture, 'dxf_to_assembly', shifted)
+    generate_fixture(tmp_path, (size,))
+    v1 = json.loads((tmp_path / f'{size}.assembly-v1.json').read_text())
+    assert not [i for i in validate_assembly_v1(v1, length_tolerance_mm=1) if i['level'] == 'error']
+    assert all(LineString([a, b]).length > 1e-8 for panel in v1['panels']
+               for a, b in zip(panel['sewline'], panel['sewline'][1:]))
+    edges = {edge['id']: (panel, edge) for panel in v1['panels'] for edge in panel['edges']}
+    measures = MEASURES_MM[size]
+    expected = {'panel-1:e3': measures['body_height'] - 16,
+                'panel-1:e6': measures['body_height'] - 16,
+                'panel-3:e2': measures['body_height'] - 16,
+                'panel-5:e3': measures['shoulder_width'] / 2 - 8}
+    for edge_id, length in expected.items():
+        panel, edge = edges[edge_id]
+        lo, hi = edge['sewline_interval_mm']
+        assert 0 <= lo < hi <= LineString(panel['sewline']).length
+        assert hi - lo == pytest.approx(length)
+    assert all(seam['ease_mm'] == pytest.approx(0) for seam in v1['seams'])
+
+
+def test_rotation_reuses_existing_origin_vertex():
+    panel = {'id': 'test', 'cutline': [[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]],
+             'sewline': [[0, 0], [1, 0], [2, 0], [2, 2], [0, 2], [0, 0]],
+             'edges': [{'id': 'free', 'from_mm': 0, 'to_mm': 2}]}
+    _rotate_sewline_away_from_seams(panel, set())
+    assert panel['sewline'][0] == panel['sewline'][-1] == [1, 0]
+    assert len(panel['sewline']) == 6
+    assert all(LineString([a, b]).length > 1e-8 for a, b in
+               zip(panel['sewline'], panel['sewline'][1:]))
 
 
 def test_reject_unknown_or_duplicate_sizes(tmp_path):
@@ -144,3 +189,22 @@ def test_ranking_orders_multiple_intervals_on_same_edge():
         {'id': 'tie', 'a': ref('a', 20), 'b': ref('d', 0), 'score': .9},
     ]
     assert [p['id'] for p in ranked_by_edge(proposals)['a']] == ['high', 'tie', 'low']
+
+
+def test_score_tie_has_deterministic_rank_and_top3_uses_either_edge():
+    def ref(name):
+        return {'edge_id': name, 'start_mm': 0., 'end_mm': 10.}
+    truth = [dict(a=ref('a'), b=ref('b'), orientation='same', construction='plain')]
+    proposals = [dict(id=name, a=ref('a'), b=ref(other), score=.8,
+                      orientation='same', construction='plain')
+                 for name, other in [('aa', 'x'), ('ab', 'y'), ('ac', 'z'), ('hit', 'b')]]
+    proposals += [dict(id=f'b{i}', a=ref('b'), b=ref(f'q{i}'), score=1.,
+                       orientation='same', construction='plain') for i in range(3)]
+    result = evaluate_proposals(list(reversed(proposals)), truth, endpoint_tolerance_mm=0)
+    assert [p['id'] for p in ranked_by_edge(proposals)['a']] == ['aa', 'ab', 'ac', 'hit']
+    assert result['score_ties']['a'][0] == {'score': .8, 'ids': ['aa', 'ab', 'ac', 'hit']}
+    assert result['rank_rule'].endswith('either edge')
+    assert result['top1']['geometry_tp'] == 0
+    assert result['top3']['geometry_tp'] == 0  # hit ranks fourth on a and b.
+    promoted = evaluate_proposals([p for p in proposals if p['id'] != 'b2'], truth, endpoint_tolerance_mm=0)
+    assert promoted['top3']['geometry_tp'] == 1  # b now ranks hit third.

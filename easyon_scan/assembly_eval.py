@@ -76,5 +76,11 @@ def evaluate_proposals(proposals, truth, *, endpoint_tolerance_mm, review_second
     times = sorted(review_seconds)
     p95 = times[math.ceil(.95 * len(times))-1] if times else None
     return {'endpoint_tolerance_mm': endpoint_tolerance_mm,
+            'rank_rule': 'score_desc_then_id_asc; selected when in top N at either edge',
+            'score_ties': {edge: [{'score': score, 'ids': [p['id'] for p in items if p['score'] == score]}
+                                  for score in sorted({p['score'] for p in items}, reverse=True)
+                                  if sum(p['score'] == score for p in items) > 1]
+                           for edge, items in groups.items()
+                           if len({p['score'] for p in items}) < len(items)},
             'top1': metrics(one, 1), 'top3': metrics(three, 3),
             'review_seconds': {'count': len(times), 'median': median(times) if times else None, 'p95': p95}}
