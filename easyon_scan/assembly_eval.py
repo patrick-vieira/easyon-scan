@@ -30,6 +30,30 @@ def ranked_by_edge(proposals):
     return by_edge
 
 
+def _matched_count(candidates, truth, tolerance, level):
+    """Maximum one-to-one matches at the requested correctness level."""
+    owners = {}
+
+    def assign(target_index, seen):
+        target = truth[target_index]
+        for candidate_index, candidate in enumerate(candidates):
+            if candidate_index in seen or not _same(candidate, target, tolerance):
+                continue
+            if level >= 2 and candidate['orientation'] != target['orientation']:
+                continue
+            if level >= 3 and candidate['construction'] != target['construction']:
+                continue
+            seen.add(candidate_index)
+            if candidate_index not in owners or assign(owners[candidate_index], seen):
+                owners[candidate_index] = target_index
+                return True
+        return False
+
+    for target_index in range(len(truth)):
+        assign(target_index, set())
+    return len(owners)
+
+
 def evaluate_proposals(proposals, truth, *, endpoint_tolerance_mm, review_seconds=()):
     """Report geometric ranking separately from orientation and construction."""
     if not math.isfinite(endpoint_tolerance_mm) or endpoint_tolerance_mm < 0:
@@ -40,22 +64,12 @@ def evaluate_proposals(proposals, truth, *, endpoint_tolerance_mm, review_second
     def evaluate(limit):
         selected = {p['id']: p for items in groups.values() for p in items[:limit]}
         candidates = list(selected.values())
-        geometry = orientation = construction = 0
-        orientation_errors = construction_errors = 0
-        for target in truth:
-            matches = [p for p in candidates if _same(p, target, endpoint_tolerance_mm)]
-            if not matches:
-                continue
-            geometry += 1
-            oriented = [p for p in matches if p['orientation'] == target['orientation']]
-            if not oriented:
-                orientation_errors += 1
-                continue
-            orientation += 1
-            if any(p['construction'] == target['construction'] for p in oriented):
-                construction += 1
-            else:
-                construction_errors += 1
+        geometry, orientation, construction = (
+            _matched_count(candidates, truth, endpoint_tolerance_mm, level)
+            for level in (1, 2, 3)
+        )
+        orientation_errors = geometry - orientation
+        construction_errors = orientation - construction
         return candidates, geometry, orientation, construction, orientation_errors, construction_errors
     one = evaluate(1)
     three = evaluate(3)

@@ -208,3 +208,37 @@ def test_score_tie_has_deterministic_rank_and_top3_uses_either_edge():
     assert result['top3']['geometry_tp'] == 0  # hit ranks fourth on a and b.
     promoted = evaluate_proposals([p for p in proposals if p['id'] != 'b2'], truth, endpoint_tolerance_mm=0)
     assert promoted['top3']['geometry_tp'] == 1  # b now ranks hit third.
+
+
+def test_one_candidate_cannot_count_twice_for_nearby_truth_pairs():
+    def ref(edge, start):
+        return {'edge_id': edge, 'start_mm': start, 'end_mm': start + 10.}
+
+    truth = [dict(a=ref('a', offset), b=ref('b', offset),
+                  orientation='same', construction='plain') for offset in (0., 0.5)]
+    candidate = dict(truth[0], id='only', score=1.)
+    report = evaluate_proposals([candidate], truth, endpoint_tolerance_mm=1.)
+    assert report['top1']['predicted'] == 1
+    assert report['top1']['geometry_tp'] == report['top1']['orientation_tp'] == 1
+    assert report['top1']['tp'] == 1
+    assert report['top1']['fp'] == 0
+    assert report['top1']['precision'] == 1.
+    assert report['top3']['truth'] == 2
+    assert report['top3']['fn'] == 1
+    assert report['top3']['recall'] == .5
+
+
+def test_matching_reassigns_ambiguous_candidate_to_reach_two_truth_pairs():
+    def ref(edge, start):
+        return {'edge_id': edge, 'start_mm': start, 'end_mm': start + 10.}
+
+    truth = [dict(a=ref('a', offset), b=ref('b', offset),
+                  orientation='same', construction='plain') for offset in (0., 0.5)]
+    ambiguous = dict(a=ref('a', 0.25), b=ref('b', 0.25),
+                     orientation='same', construction='plain', id='A', score=1.)
+    first_only = dict(truth[0], id='B', score=.9)
+    report = evaluate_proposals([ambiguous, first_only], truth, endpoint_tolerance_mm=.3)
+    assert report['top3']['geometry_tp'] == 2
+    assert report['top3']['orientation_tp'] == 2
+    assert report['top3']['tp'] == 2
+    assert report['top3']['fn'] == 0
