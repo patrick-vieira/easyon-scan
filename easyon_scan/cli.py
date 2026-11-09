@@ -71,6 +71,9 @@ def main():
     p = commands.add_parser("propose", help="Suggest review-only seam pairs from assembly v0")
     p.add_argument("file")
     p.add_argument("--out", required=True)
+    p = commands.add_parser("validate", help="Validate a garment assembly v0 JSON file")
+    p.add_argument("file")
+    p.add_argument("--json", action="store_true", help="Output JSON instead of human-readable format")
     p = commands.add_parser("dxf-inventory", help="Diagnostic report of a DXF file before garment-assembly conversion")
     p.add_argument("file")
     p.add_argument("--json", action="store_true", help="Output as JSON instead of human-readable text")
@@ -80,6 +83,29 @@ def main():
             from .synthetic_garment import generate_fixture
             generate_fixture(args.out, tuple(args.sizes.split(",")))
             print(f"Saved synthetic garment fixture to {args.out}")
+        elif args.command == "validate":
+            from pathlib import Path
+            from .assembly import validate_assembly
+            try:
+                doc = json.loads(Path(args.file).read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                if args.json:
+                    print(json.dumps({"valid": False, "issues": [{"level": "error", "code": "json_parse", "panel": None, "message": str(exc)}]}))
+                else:
+                    print(f"Error: Invalid JSON - {exc}")
+                parser.exit(1)
+            issues = validate_assembly(doc)
+            errors = [i for i in issues if i['level'] == 'error']
+            warnings = [i for i in issues if i['level'] == 'warning']
+            if args.json:
+                print(json.dumps({"valid": len(errors) == 0, "issues": issues}))
+            else:
+                for issue in issues:
+                    panel_str = f" ({issue['panel']})" if issue.get('panel') else ""
+                    print(f"{issue['level']}: {issue['code']}{panel_str}: {issue['message']}")
+                print(f"{len(errors)} errors, {len(warnings)} warnings")
+            if errors:
+                parser.exit(1)
         elif args.command == "dxf-inventory":
             from pathlib import Path
             from .dxf_inventory import inventory
