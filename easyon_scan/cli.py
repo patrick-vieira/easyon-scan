@@ -68,9 +68,17 @@ def main():
     p = commands.add_parser("propose", help="Suggest review-only seam pairs from assembly v0")
     p.add_argument("file")
     p.add_argument("--out", required=True)
+    p = commands.add_parser("dxf-inventory", help="Diagnostic report of a DXF file before garment-assembly conversion")
+    p.add_argument("file")
+    p.add_argument("--json", action="store_true", help="Output as JSON instead of human-readable text")
     args = parser.parse_args()
     try:
-        if args.command == "propose":
+        if args.command == "dxf-inventory":
+            from pathlib import Path
+            from .dxf_inventory import inventory
+            result = inventory(args.file, json_output=args.json)
+            print(result)
+        elif args.command == "propose":
             from pathlib import Path
             from .propose import propose_assembly
             result = propose_assembly(json.loads(Path(args.file).read_text(encoding="utf-8")))
