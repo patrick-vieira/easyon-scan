@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 from importlib.resources import files
 
 from shapely.geometry import LineString, Point, Polygon
@@ -48,7 +49,8 @@ def migrate_v0(doc):
         a = {'edge_id': old['a'], 'start_mm': 0., 'end_mm': _edge(result, old['a'])['length_mm']}
         b = {'edge_id': old['b'], 'start_mm': 0., 'end_mm': _edge(result, old['b'])['length_mm']}
         proposal = dict(id=old['id'], a=a, b=b, orientation=old['orientation'],
-                        matches=copy.deepcopy(old['matches']), construction=old.get('construction'),
+                        matches=[dict(a_mm=a, b_mm=b) for a, b in sorted({(m['a_mm'], m['b_mm']) for m in old['matches']})],
+                        construction=old.get('construction'),
                         allowance_mm={'a': None, 'b': None}, ease_mm=None,
                         score=old['score'], signals=copy.deepcopy(old['signals']),
                         model_version=old['model_version'], created_at=None, status='proposed')
@@ -82,6 +84,19 @@ def validate_assembly_v1(doc, *, length_tolerance_mm):
     def structure(value, spec, path='$'):
         if '$ref' in spec:
             spec = schema['$defs'][spec['$ref'].split('/')[-1]]
+        if 'anyOf' in spec:
+            for alternative in spec['anyOf']:
+                start = len(issues)
+                structure(value, alternative, path)
+                valid_alternative = len(issues) == start
+                del issues[start:]
+                if valid_alternative:
+                    break
+            else:
+                issues.append(_issue('structure', f'{path}: no matching alternative'))
+                return
+        if isinstance(value, str) and 'pattern' in spec and not re.search(spec['pattern'], value):
+            issues.append(_issue('structure', f'{path}: invalid pattern'))
         kind = spec.get('type')
         kinds = kind if isinstance(kind, list) else [kind]
         valid = {'object': lambda x: isinstance(x, dict), 'array': lambda x: isinstance(x, list),
@@ -135,7 +150,7 @@ def validate_assembly_v1(doc, *, length_tolerance_mm):
         for edge in panel['edges']:
             interval = edge['sewline_interval_mm']
             if interval is not None:
-                if panel['sewline_status'] != 'from_dxf' or not 0 <= interval[0] < interval[1] <= LineString(panel['sewline']).length:
+                if panel['sewline_status'] != 'from_dxf' or not 0 <= interval[0] < interval[1] <= LineString(panel['sewline']).length + 1e-8:
                     issues.append(_issue('sewline_interval', 'Sewline interval must lie on a measured sewline', panel['id']))
     used = []
     def check_ref(ref, owner, consume=False):
@@ -156,10 +171,10 @@ def validate_assembly_v1(doc, *, length_tolerance_mm):
     def check_pair(pair, owner, confirmed=False):
         if not (check_ref(pair['a'], owner, confirmed) and check_ref(pair['b'], owner, confirmed)):
             return
-        if pair['a']['edge_id'] == pair['b']['edge_id']:
+        if pair['a'] == pair['b']:
             issues.append(_issue('same_segment', f'{owner}: identical edge'))
         matches = pair['matches']
-        if len(matches) < 2 or pair['orientation'] == 'unknown' and confirmed:
+        if confirmed and (len(matches) < 2 or pair['orientation'] == 'unknown'):
             issues.append(_issue('matches', f'{owner}: two matches and known orientation required'))
         for m in matches:
             if not pair['a']['start_mm'] <= m['a_mm'] <= pair['a']['end_mm'] or not pair['b']['start_mm'] <= m['b_mm'] <= pair['b']['end_mm']:
@@ -186,17 +201,61 @@ def validate_assembly_v1(doc, *, length_tolerance_mm):
             issues.append(_issue('proposal_changed', f"Proposal {proposal['id']} content hash mismatch"))
         check_pair(proposal, proposal['id'])
     decisions = doc['review']['decisions']
+    accepted = {}
+    seen_decisions = set()
+    panels = {p['id'] for p in doc['panels']}
+    operations = {o['id'] for o in doc['operations']}
+    for collection in ('seams', 'operations', 'landmarks'):
+        if len({item['id'] for item in doc[collection]}) != len(doc[collection]):
+            issues.append(_issue('duplicate_id', f'Duplicate {collection} ID'))
+    fields = ('a', 'b', 'orientation', 'matches', 'construction', 'allowance_mm', 'ease_mm')
     for decision in decisions:
-        proposal = proposals.get(decision['proposal_id'])
-        if proposal is None or decision['before_sha256'] != proposal['content_sha256']:
-            issues.append(_issue('decision_reference', 'Decision must refer to original proposal hash'))
+        action = decision['action']
+        if action in ('accept', 'reject', 'defer'):
+            target = decision.get('proposal_id')
+            proposal = proposals.get(target)
+            if proposal is None or decision.get('before_sha256') != proposal['content_sha256']:
+                issues.append(_issue('decision_reference', 'Decision must refer to original proposal hash'))
+            if 'operation_id' in decision or 'panel_id' in decision:
+                issues.append(_issue('decision_reference', 'Proposal decision has unrelated target'))
+            if action != 'accept' and 'after' in decision:
+                issues.append(_issue('decision_edit', 'Only accept can carry an edited pair snapshot'))
+            key = ('proposal', target)
+            if action == 'accept' and proposal is not None:
+                expected = {k: proposal[k] for k in fields}
+                if 'after' in decision:
+                    after = decision['after']
+                    if not isinstance(after, dict) or set(after) != set(fields):
+                        issues.append(_issue('decision_edit', 'after must be a complete pair snapshot'))
+                    else:
+                        for field in fields:
+                            structure(after[field], schema['properties']['proposals']['items']['properties'][field], '$.review.after.' + field)
+                        expected = after
+                accepted[target] = expected
+        else:
+            field, targets = ('operation_id', operations) if action == 'confirm_operation' else ('panel_id', panels)
+            target = decision.get(field)
+            key = (field, target)
+            if target not in targets or any(k in decision for k in ('proposal_id', 'before_sha256', 'after')):
+                issues.append(_issue('decision_reference', 'Decision requires an existing operation or panel only'))
+            other = 'panel_id' if field == 'operation_id' else 'operation_id'
+            if other in decision:
+                issues.append(_issue('decision_reference', 'Decision has unrelated target'))
+        if key in seen_decisions:
+            issues.append(_issue('decision_conflict', 'Duplicate or conflicting decision for target'))
+        seen_decisions.add(key)
         if not decision['reviewer'] or not decision['at'] or not decision['reason']:
             issues.append(_issue('decision_trace', 'Decision requires reviewer, time and reason'))
-    accepted = {d['proposal_id'] for d in decisions if d['action'] == 'accept'}
     for seam in doc['seams']:
-        if seam['proposal_id'] not in accepted:
+        expected = accepted.get(seam['proposal_id'])
+        if expected is None:
             issues.append(_issue('unconfirmed_seam', 'Seam requires an accept decision'))
+        elif {k: seam[k] for k in fields} != expected:
+            issues.append(_issue('seam_changed', 'Seam must match accepted proposal or explicit after snapshot'))
         check_pair(seam, seam['id'], True)
+    for proposal_id in accepted:
+        if not any(seam['proposal_id'] == proposal_id for seam in doc['seams']):
+            issues.append(_issue('accepted_seam_missing', 'Accepted proposal requires a resulting seam'))
     for op in doc['operations']:
         if op['type'] not in ('hem', 'fold'):
             issues.append(_issue('operation_unsupported', f"{op['type']} is not implemented"))
@@ -205,7 +264,7 @@ def validate_assembly_v1(doc, *, length_tolerance_mm):
         if not any(d['action'] == 'confirm_operation' and d.get('operation_id') == op['id'] for d in decisions):
             issues.append(_issue('unconfirmed_operation', f"Operation {op['id']} lacks decision"))
     if doc['review']['status'] == 'human_approved':
-        closed = {d['panel_id'] for d in decisions if d['action'] == 'close_panel'}
+        closed = {d.get('panel_id') for d in decisions if d['action'] == 'close_panel'}
         if closed != {p['id'] for p in doc['panels']}:
             issues.append(_issue('panel_approval', 'All complete panels require close_panel decisions'))
     return issues

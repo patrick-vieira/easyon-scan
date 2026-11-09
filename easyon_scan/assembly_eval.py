@@ -3,31 +3,40 @@ import math
 from statistics import median
 
 
+def _aligned(candidate, truth, tolerance):
+    """Return candidate matches in truth A/B order, or None for different segments."""
+    for swapped in (False, True):
+        first, second = (candidate['b'], candidate['a']) if swapped else (candidate['a'], candidate['b'])
+        if all(ref['edge_id'] == target['edge_id'] and
+               all(abs(ref[k] - target[k]) <= tolerance for k in ('start_mm', 'end_mm'))
+               for ref, target in ((first, truth['a']), (second, truth['b']))):
+            matches = candidate.get('matches', [])
+            return sorted(({'a_mm': m['b_mm'], 'b_mm': m['a_mm']} if swapped else m
+                           for m in matches), key=lambda m: m['a_mm'])
+    return None
+
+
+def _matches(candidate, truth, tolerance):
+    matches = _aligned(candidate, truth, tolerance)
+    expected = sorted(truth.get('matches', []), key=lambda m: m['a_mm'])
+    return (matches is not None and len(matches) == len(expected) and
+            all(abs(a[k] - b[k]) <= tolerance for a, b in zip(matches, expected)
+                for k in ('a_mm', 'b_mm')))
+
+
 def _same(candidate, truth, tolerance):
-    a, b = candidate['a'], candidate['b']
-    x, y = truth['a'], truth['b']
-    for first, second in ((a, b), (b, a)):
-        if (first['edge_id'] == x['edge_id'] and second['edge_id'] == y['edge_id']
-                and max(abs(first[k]-x[k]) for k in ('start_mm', 'end_mm')) <= tolerance
-                and max(abs(second[k]-y[k]) for k in ('start_mm', 'end_mm')) <= tolerance):
-            return True
-    return False
+    return _aligned(candidate, truth, tolerance) is not None
 
 
 def ranked_by_edge(proposals):
-    """Rank every candidate at both participating edges with a stable tie break."""
+    """Rank candidates at each canonical (edge, start, end) segment key."""
     groups = {}
     for candidate in sorted(proposals, key=lambda p: (-p['score'], p['id'])):
-        for ref in (candidate['a'], candidate['b']):
-            key = (ref['edge_id'], ref['start_mm'], ref['end_mm'])
+        keys = {(ref['edge_id'], ref['start_mm'], ref['end_mm'])
+                for ref in (candidate['a'], candidate['b'])}
+        for key in sorted(keys):
             groups.setdefault(key, []).append(candidate)
-    by_edge = {}
-    for (edge_id, _, _), items in groups.items():
-        by_edge.setdefault(edge_id, []).extend(items)
-    for edge_id, items in by_edge.items():
-        by_edge[edge_id] = sorted({item['id']: item for item in items}.values(),
-                                  key=lambda p: (-p['score'], p['id']))
-    return by_edge
+    return groups
 
 
 def _matched_count(candidates, truth, tolerance, level):
@@ -41,7 +50,9 @@ def _matched_count(candidates, truth, tolerance, level):
                 continue
             if level >= 2 and candidate['orientation'] != target['orientation']:
                 continue
-            if level >= 3 and candidate['construction'] != target['construction']:
+            if level >= 3 and not _matches(candidate, target, tolerance):
+                continue
+            if level >= 4 and candidate['construction'] != target['construction']:
                 continue
             seen.add(candidate_index)
             if candidate_index not in owners or assign(owners[candidate_index], seen):
@@ -64,19 +75,19 @@ def evaluate_proposals(proposals, truth, *, endpoint_tolerance_mm, review_second
     def evaluate(limit):
         selected = {p['id']: p for items in groups.values() for p in items[:limit]}
         candidates = list(selected.values())
-        geometry, orientation, construction = (
+        geometry, orientation, matches, construction = (
             _matched_count(candidates, truth, endpoint_tolerance_mm, level)
-            for level in (1, 2, 3)
+            for level in (1, 2, 3, 4)
         )
         orientation_errors = geometry - orientation
-        construction_errors = orientation - construction
-        return candidates, geometry, orientation, construction, orientation_errors, construction_errors
+        construction_errors = matches - construction
+        return candidates, geometry, orientation, matches, construction, orientation_errors, construction_errors
     one = evaluate(1)
     three = evaluate(3)
     def metrics(result, top):
-        candidates, geometry, orientation, construction, orientation_errors, construction_errors = result
+        candidates, geometry, orientation, matches, construction, orientation_errors, construction_errors = result
         value = {'tp': construction, 'geometry_tp': geometry, 'orientation_tp': orientation,
-                 'construction_tp': construction, 'orientation_errors': orientation_errors,
+                 'matches_tp': matches, 'matches_errors': orientation - matches, 'construction_tp': construction, 'orientation_errors': orientation_errors,
                  'construction_errors': construction_errors}
         if top == 1:
             value.update(fp=len(candidates)-construction, predicted=len(candidates),
@@ -90,8 +101,9 @@ def evaluate_proposals(proposals, truth, *, endpoint_tolerance_mm, review_second
     times = sorted(review_seconds)
     p95 = times[math.ceil(.95 * len(times))-1] if times else None
     return {'endpoint_tolerance_mm': endpoint_tolerance_mm,
-            'rank_rule': 'score_desc_then_id_asc; selected when in top N at either edge',
-            'score_ties': {edge: [{'score': score, 'ids': [p['id'] for p in items if p['score'] == score]}
+            'rank_rule': 'score_desc_then_id_asc; selected when in top N at either canonical segment',
+            'denominator_rule': 'top1: unique selected candidates; top3: truth pairs; one-to-one matching',
+            'score_ties': {str(edge): [{'score': score, 'ids': [p['id'] for p in items if p['score'] == score]}
                                   for score in sorted({p['score'] for p in items}, reverse=True)
                                   if sum(p['score'] == score for p in items) > 1]
                            for edge, items in groups.items()

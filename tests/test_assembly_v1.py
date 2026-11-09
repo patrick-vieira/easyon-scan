@@ -73,3 +73,125 @@ def test_legacy_proposal_is_snapshot():
         assert 'proposal_changed' not in codes(migrated)
         migrated['proposals'][0]['score'] += .01
         assert 'proposal_changed' in codes(migrated)
+
+
+@pytest.fixture
+def confirmed(tmp_path):
+    import json
+    from easyon_scan.synthetic_garment import generate_fixture
+    generate_fixture(tmp_path, sizes=('M',))
+    return json.loads((tmp_path / 'M.assembly-v1.json').read_text())
+
+
+@pytest.mark.parametrize('field,value', [('orientation', 'unknown'), ('construction', 'gather'),
+                                        ('ease_mm', 5), ('matches', [])])
+def test_seam_cannot_silently_change_accept(confirmed, field, value):
+    confirmed['seams'][0][field] = value
+    assert 'seam_changed' in codes(confirmed)
+
+
+def test_explicit_edit_snapshot_is_traceable(confirmed):
+    seam = confirmed['seams'][0]
+    seam['allowance_mm']['a'] = 12
+    assert 'seam_changed' in codes(confirmed)
+    confirmed['review']['decisions'][0]['after'] = {
+        k: copy.deepcopy(v) for k, v in seam.items() if k not in ('id', 'proposal_id')}
+    assert not codes(confirmed)
+    confirmed['review']['decisions'][0]['after'] = {'orientation': 'same'}
+    assert 'decision_edit' in codes(confirmed)
+
+
+def test_operation_and_panel_decisions_have_their_own_targets():
+    doc = fixture()
+    doc['operations'] = [dict(id='hem', type='hem', segments=[])]
+    trace = dict(reviewer='test', at='2026-01-01', reason='Checked')
+    doc['review']['decisions'] = [dict(action='confirm_operation', operation_id='hem', **trace),
+                                 dict(action='close_panel', panel_id=doc['panels'][0]['id'], **trace)]
+    assert 'decision_reference' not in codes(doc)
+    doc['review']['decisions'][0]['operation_id'] = 'missing'
+    assert {'decision_reference', 'unconfirmed_operation'} <= codes(doc)
+
+
+@pytest.mark.parametrize('action', ['accept', 'reject', 'defer'])
+def test_conflicting_decisions_are_rejected(confirmed, action):
+    decision = copy.deepcopy(confirmed['review']['decisions'][0])
+    decision['action'] = action
+    confirmed['review']['decisions'].append(decision)
+    assert 'decision_conflict' in codes(confirmed)
+
+
+@pytest.mark.parametrize('field,value', [('grain', 'invalid'), ('sewline', [1, 2])])
+def test_nullable_structures_are_checked(field, value):
+    doc = fixture()
+    doc['panels'][0][field] = value
+    assert 'structure' in codes(doc)
+
+
+def test_migration_keeps_actual_generated_proposals(tmp_path):
+    from easyon_scan.synthetic_garment import _dxf
+    from easyon_scan.propose import propose_assembly
+    proposed = propose_assembly(dxf_to_assembly(_dxf('M')), max_per_edge=None)
+    assert proposed['proposals']
+    original = copy.deepcopy(proposed)
+    migrated = migrate_v0(proposed)
+    assert proposed == original
+    assert len(migrated['proposals']) == len(proposed['proposals'])
+    assert not [i for i in validate_assembly_v1(migrated, length_tolerance_mm=1) if i['level'] == 'error']
+    migrated['proposals'][0]['content_sha256'] = 'invalid'
+    assert 'structure' in codes(migrated)
+
+
+def test_internal_matches_and_swapped_ab_evaluation():
+    ref = lambda edge: dict(edge_id=edge, start_mm=0., end_mm=100.)
+    truth = dict(a=ref('a'), b=ref('b'), orientation='reversed', construction='plain',
+                 matches=[dict(a_mm=0., b_mm=100.), dict(a_mm=20., b_mm=70.), dict(a_mm=100., b_mm=0.)])
+    candidate = dict(copy.deepcopy(truth), id='candidate', score=1.)
+    def result():
+        return evaluate_proposals([candidate], [truth], endpoint_tolerance_mm=0)['top1']
+    assert result()['tp'] == 1
+    candidate['a'], candidate['b'] = candidate['b'], candidate['a']
+    candidate['matches'] = [dict(a_mm=m['b_mm'], b_mm=m['a_mm']) for m in candidate['matches']]
+    assert result()['tp'] == 1
+    candidate['matches'][1]['b_mm'] = 21.
+    assert result()['tp'] == 0 and result()['matches_errors'] == 1
+    candidate['orientation'] = 'same'
+    assert result()['orientation_errors'] == 1
+
+
+@pytest.mark.parametrize('field', ['a', 'b'])
+def test_segment_edit_requires_explicit_snapshot(confirmed, field):
+    confirmed['seams'][0][field]['start_mm'] += 1
+    assert 'seam_changed' in codes(confirmed)
+
+
+def test_swapping_segments_without_match_columns_is_wrong():
+    a = dict(edge_id='a', start_mm=0., end_mm=100.)
+    b = dict(edge_id='b', start_mm=0., end_mm=100.)
+    truth = dict(a=a, b=b, orientation='reversed', construction='plain',
+                 matches=[dict(a_mm=0., b_mm=100.), dict(a_mm=20., b_mm=70.), dict(a_mm=100., b_mm=0.)])
+    candidate = dict(truth, a=b, b=a, id='wrong', score=1.)
+    report = evaluate_proposals([candidate], [truth], endpoint_tolerance_mm=0)
+    assert report['top1']['geometry_tp'] == 1
+    assert report['top1']['matches_errors'] == 1
+    assert report['top1']['tp'] == 0
+
+
+def test_missing_panel_reference_reports_instead_of_crashing():
+    doc = fixture()
+    doc['review']['status'] = 'human_approved'
+    doc['review']['decisions'] = [dict(action='close_panel', reviewer='x', at='now', reason='x')]
+    assert {'decision_reference', 'panel_approval'} <= codes(doc)
+
+
+
+def test_accept_requires_resulting_seam(confirmed):
+    confirmed['seams'].pop()
+    assert 'accepted_seam_missing' in codes(confirmed)
+
+
+@pytest.mark.parametrize('action', ['reject', 'defer'])
+def test_only_accept_can_edit(confirmed, action):
+    decision = confirmed['review']['decisions'][0]
+    decision['action'] = action
+    decision['after'] = {}
+    assert 'decision_edit' in codes(confirmed)
