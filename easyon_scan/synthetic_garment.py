@@ -145,6 +145,34 @@ def _json_bytes(value):
     return (json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + '\n').encode('utf-8')
 
 
+def _rotate_sewline_away_from_seams(panel, paired_ids):
+    """Put the v1 sewline origin inside a free edge so seam arcs are linear."""
+    cut = LineString(panel['cutline'])
+    sew = LineString(panel['sewline'])
+    vertices = panel['sewline']
+    for edge in panel['edges']:
+        if edge['id'] in paired_ids:
+            continue
+        middle = cut.interpolate((edge['from_mm'] + edge['to_mm']) / 2)
+        origin = sew.project(middle)
+        # The projected origin lies on one segment of this closed ring.
+        cumulative = 0.
+        for i, (a, b) in enumerate(zip(vertices, vertices[1:])):
+            segment = LineString([a, b])
+            if cumulative - 1e-8 <= origin <= cumulative + segment.length + 1e-8:
+                point = list(sew.interpolate(origin).coords[0])
+                rotated = [point] + vertices[i + 1:-1] + vertices[:i + 1] + [point]
+                old = panel['sewline']
+                panel['sewline'] = rotated
+                length = LineString(rotated).length
+                if all(0 <= (arc := sewline_interval_mm(panel, item))[0] < arc[1] <= length + 1e-8
+                       for item in panel['edges'] if item['id'] in paired_ids):
+                    return
+                panel['sewline'] = old
+            cumulative += segment.length
+    raise ValueError(f'No free sewline origin for {panel["id"]}')
+
+
 def generate_fixture(out, sizes=('P', 'M', 'G')):
     """Write one DXF and review-only assembly/evaluation bundle per selected size."""
     if not sizes or len(set(sizes)) != len(sizes) or any(s not in MEASURES_MM for s in sizes):
@@ -161,6 +189,9 @@ def generate_fixture(out, sizes=('P', 'M', 'G')):
         truth = _truth(v0)
         proposed = propose_assembly(v0, max_per_edge=None)
         v1 = migrate_v0(v0)
+        paired_ids = {ref['edge_id'] for pair in truth for ref in (pair['a'], pair['b'])}
+        for panel in v1['panels']:
+            _rotate_sewline_away_from_seams(panel, paired_ids)
         edge_map = {e['id']: e for panel in v1['panels'] for e in panel['edges']}
         for pair in truth:
             for ref in (pair['a'], pair['b']):

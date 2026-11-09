@@ -4,6 +4,7 @@ import json
 
 import pytest
 import ezdxf
+from shapely.geometry import LineString
 
 from easyon_scan.assembly_eval import evaluate_proposals, ranked_by_edge
 
@@ -60,8 +61,8 @@ def test_fixture_is_deterministic_and_importable(tmp_path):
             assert seam['ease_mm'] == pytest.approx(0)
         width, height = MEASURES_MM[size]['body_width'], MEASURES_MM[size]['body_height']
         side = MEASURES_MM[size]['side_width']
-        assert edges['panel-1:e6'][1]['sewline_interval_mm'] == pytest.approx([2*width + height - 48, 2*width + 2*height - 64])
-        assert edges['panel-3:e4'][1]['sewline_interval_mm'] == pytest.approx([2*side + height - 48, 2*side + 2*height - 64])
+        assert edges['panel-1:e6'][1]['sewline_interval_mm'] == pytest.approx([2*width + height - 48 - (width/4 - 8), 2*width + 2*height - 64 - (width/4 - 8)])
+        assert edges['panel-3:e4'][1]['sewline_interval_mm'] == pytest.approx([2*side + height - 48 - (side/2 - 8), 2*side + 2*height - 64 - (side/2 - 8)])
         assert lengths[-1] == pytest.approx(width/2 - 8)
         assert edges['panel-1:e3'][1]['sewline_interval_mm'][1] - edges['panel-1:e3'][1]['sewline_interval_mm'][0] < MEASURES_MM[size]['body_height']
         assert report['top3']['geometry_tp'] >= report['top1']['geometry_tp']
@@ -92,6 +93,37 @@ def test_truth_rejects_swapped_shoulder_edge(tmp_path):
             panel['edges'][0]['length_mm'] += 10
     with pytest.raises(ValueError, match='Incompatible seam lengths'):
         _truth(v0)
+
+
+@pytest.mark.parametrize('size', ('P', 'M', 'G'))
+def test_v1_serializes_reversed_mid_edge_sewline(size, tmp_path, monkeypatch):
+    import easyon_scan.synthetic_garment as fixture
+    original = fixture.dxf_to_assembly
+
+    def shifted(raw, **kwargs):
+        doc = original(raw, **kwargs)
+        for panel in doc['panels']:
+            vertices = list(reversed(panel['sewline'][:-1]))
+            midpoint = [(vertices[1][axis] + vertices[2][axis]) / 2 for axis in (0, 1)]
+            panel['sewline'] = [midpoint] + vertices[2:] + vertices[:2] + [vertices[1], midpoint]
+        return doc
+
+    monkeypatch.setattr(fixture, 'dxf_to_assembly', shifted)
+    generate_fixture(tmp_path, (size,))
+    v1 = json.loads((tmp_path / f'{size}.assembly-v1.json').read_text())
+    assert not [i for i in validate_assembly_v1(v1, length_tolerance_mm=1) if i['level'] == 'error']
+    edges = {edge['id']: (panel, edge) for panel in v1['panels'] for edge in panel['edges']}
+    measures = MEASURES_MM[size]
+    expected = {'panel-1:e3': measures['body_height'] - 16,
+                'panel-1:e6': measures['body_height'] - 16,
+                'panel-3:e2': measures['body_height'] - 16,
+                'panel-5:e3': measures['shoulder_width'] / 2 - 8}
+    for edge_id, length in expected.items():
+        panel, edge = edges[edge_id]
+        lo, hi = edge['sewline_interval_mm']
+        assert 0 <= lo < hi <= LineString(panel['sewline']).length
+        assert hi - lo == pytest.approx(length)
+    assert all(seam['ease_mm'] == pytest.approx(0) for seam in v1['seams'])
 
 
 def test_reject_unknown_or_duplicate_sizes(tmp_path):
