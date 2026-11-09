@@ -4,9 +4,8 @@ import json
 
 import pytest
 import ezdxf
-from shapely.geometry import LineString
 
-from easyon_scan.assembly_eval import evaluate_proposals
+from easyon_scan.assembly_eval import evaluate_proposals, ranked_by_edge
 
 from easyon_scan.synthetic_garment import MEASURES_MM, _truth, generate_fixture
 from easyon_scan.assembly_v1 import validate_assembly_v1
@@ -54,17 +53,21 @@ def test_fixture_is_deterministic_and_importable(tmp_path):
             lengths = []
             for ref in (pair['a'], pair['b']):
                 panel, edge = edges[ref['edge_id']]
-                cut, sew = LineString(panel['cutline']), LineString(panel['sewline'])
-                actual = sorted(sew.project(cut.interpolate(edge[key]))
-                                for key in ('from_mm', 'to_mm'))
-                assert edge['sewline_interval_mm'] == pytest.approx(actual)
-                lengths.append(actual[1] - actual[0])
+                lo, hi = edge['sewline_interval_mm']
+                assert 0 <= lo < hi
+                lengths.append(hi - lo)
             assert seam['ease_mm'] == pytest.approx(lengths[0] - lengths[1])
+            assert seam['ease_mm'] == pytest.approx(0)
+        width, height = MEASURES_MM[size]['body_width'], MEASURES_MM[size]['body_height']
+        side = MEASURES_MM[size]['side_width']
+        assert edges['panel-1:e6'][1]['sewline_interval_mm'] == pytest.approx([2*width + height - 48, 2*width + 2*height - 64])
+        assert edges['panel-3:e4'][1]['sewline_interval_mm'] == pytest.approx([2*side + height - 48, 2*side + 2*height - 64])
+        assert lengths[-1] == pytest.approx(width/2 - 8)
         assert edges['panel-1:e3'][1]['sewline_interval_mm'][1] - edges['panel-1:e3'][1]['sewline_interval_mm'][0] < MEASURES_MM[size]['body_height']
         assert report['top3']['geometry_tp'] >= report['top1']['geometry_tp']
         assert report['top1']['tp'] == report['top3']['tp'] == 0
         assert report['top3']['geometry_tp'] > 0
-        assert [row['rank'] for row in report['pair_diagnostics']] == [None, None, None, 3, 6, 5, 8, 7]
+        assert [row['rank'] for row in report['pair_diagnostics']] == [3, 4, 3, 5, 6, 5, 5, 7]
         assert any(row['failure'] == 'rank_below_3' for row in report['pair_diagnostics'])
 
         assert report['top3']['truth'] == 8
@@ -130,3 +133,14 @@ def test_geometry_ranking_changes_and_construction_is_explicit():
     assert low['top1']['geometry_tp'] == 0
     assert high['top1']['construction_errors'] == 1
     assert high['top1']['tp'] == 0
+
+
+def test_ranking_orders_multiple_intervals_on_same_edge():
+    def ref(edge, start):
+        return {'edge_id': edge, 'start_mm': start, 'end_mm': start + 10}
+    proposals = [
+        {'id': 'low', 'a': ref('a', 0), 'b': ref('b', 0), 'score': .1},
+        {'id': 'high', 'a': ref('a', 10), 'b': ref('c', 0), 'score': .9},
+        {'id': 'tie', 'a': ref('a', 20), 'b': ref('d', 0), 'score': .9},
+    ]
+    assert [p['id'] for p in ranked_by_edge(proposals)['a']] == ['high', 'tie', 'low']

@@ -36,13 +36,22 @@ def _notches(edge, reverse=False):
 def _sew_length(panel, edge):
     if panel['sewline_status'] != 'from_dxf':
         return None
+    interval = sewline_interval_mm(panel, edge)
+    return interval[1] - interval[0] if interval[1] > interval[0] else None
+
+
+def sewline_interval_mm(panel, edge):
+    """Project an oriented cut edge onto its corresponding measured sew arc."""
     cut = LineString(panel['cutline'])
     sew = LineString(panel['sewline'])
     start = cut.interpolate(edge['from_mm'])
     end = cut.interpolate(edge['to_mm'])
     a, b = sew.project(start), sew.project(end)
-    distance = abs(b - a)
-    return distance if distance > 0 else None
+    # The closing cut vertex has the same coordinates as the first vertex.
+    # Its projection can be zero although this edge follows the final sew arc.
+    if math.isclose(edge['to_mm'], cut.length, abs_tol=1e-7) and b < a:
+        b = sew.length
+    return [min(a, b), max(a, b)]
 
 
 def propose_assembly(doc, *, max_per_edge=3):

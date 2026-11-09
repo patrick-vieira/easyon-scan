@@ -10,7 +10,7 @@ from shapely.geometry import LineString
 from .assembly import dxf_to_assembly, validate_assembly
 from .assembly_v1 import _digest, migrate_v0, validate_assembly_v1
 from .assembly_eval import _same, evaluate_proposals, ranked_by_edge
-from .propose import propose_assembly
+from .propose import propose_assembly, sewline_interval_mm
 
 # Explicit fixture table, not a size grading rule or real-body measurements.
 MEASURES_MM = {
@@ -54,7 +54,10 @@ def _dxf(size):
     for index, (name, width, height) in enumerate(pieces):
         block = doc.blocks.new(f'PIECE_{index + 1}')
         block.add_lwpolyline(_outline(width, height, name in ('Front', 'Back')), close=True, dxfattribs={'layer': '1'})
-        block.add_lwpolyline([(8, 8), (width - 8, 8), (width - 8, height - 8), (8, height - 8)], close=True, dxfattribs={'layer': '14'})
+        inset = 4 if name.startswith('Shoulder') else 8
+        block.add_lwpolyline([(inset, inset), (width - inset, inset),
+                              (width - inset, height - inset), (inset, height - inset)],
+                             close=True, dxfattribs={'layer': '14'})
         if name in ('Front', 'Back'):
             block.add_point((width / 2, 0), dxfattribs={'layer': '4'})
             block.add_point((width / 2, height), dxfattribs={'layer': '4'})
@@ -163,10 +166,7 @@ def generate_fixture(out, sizes=('P', 'M', 'G')):
             for ref in (pair['a'], pair['b']):
                 edge = edge_map[ref['edge_id']]
                 panel = next(p for p in v1['panels'] if edge in p['edges'])
-                cut, sew = LineString(panel['cutline']), LineString(panel['sewline'])
-                start = sew.project(cut.interpolate(edge['from_mm']))
-                end = sew.project(cut.interpolate(edge['to_mm']))
-                edge['sewline_interval_mm'] = sorted((start, end))
+                edge['sewline_interval_mm'] = sewline_interval_mm(panel, edge)
         for index, pair in enumerate(truth, 1):
             a, b = pair['a'], pair['b']
             matches = [{'a_mm': 0., 'b_mm': b['end_mm'] if pair['orientation'] == 'reversed' else 0.},
