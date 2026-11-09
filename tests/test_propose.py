@@ -91,7 +91,7 @@ def test_sew_arc_uses_physical_edge_with_reversed_and_shifted_origin(size, rever
         if offset == 'mid':
             midpoint = [(vertices[1][0] + vertices[2][0])/2,
                         (vertices[1][1] + vertices[2][1])/2]
-            vertices = [midpoint] + vertices[2:] + vertices[:2] + [vertices[1]]
+            vertices = [midpoint] + vertices[2:] + vertices[:2]
         else:
             vertices = vertices[offset:] + vertices[:offset]
         panel['sewline'] = vertices + vertices[:1]
