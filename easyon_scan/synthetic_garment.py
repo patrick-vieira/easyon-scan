@@ -160,8 +160,15 @@ def _rotate_sewline_away_from_seams(panel, paired_ids):
         for i, (a, b) in enumerate(zip(vertices, vertices[1:])):
             segment = LineString([a, b])
             if cumulative - 1e-8 <= origin <= cumulative + segment.length + 1e-8:
-                point = list(sew.interpolate(origin).coords[0])
-                rotated = [point] + vertices[i + 1:-1] + vertices[:i + 1] + [point]
+                if abs(origin - cumulative) <= 1e-8:
+                    start = i
+                    rotated = vertices[start:-1] + vertices[:start] + [vertices[start]]
+                elif abs(origin - cumulative - segment.length) <= 1e-8:
+                    start = (i + 1) % (len(vertices) - 1)
+                    rotated = vertices[start:-1] + vertices[:start] + [vertices[start]]
+                else:
+                    point = list(sew.interpolate(origin).coords[0])
+                    rotated = [point] + vertices[i + 1:-1] + vertices[:i + 1] + [point]
                 old = panel['sewline']
                 panel['sewline'] = rotated
                 length = LineString(rotated).length

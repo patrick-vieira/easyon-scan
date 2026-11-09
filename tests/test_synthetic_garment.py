@@ -8,7 +8,7 @@ from shapely.geometry import LineString
 
 from easyon_scan.assembly_eval import evaluate_proposals, ranked_by_edge
 
-from easyon_scan.synthetic_garment import MEASURES_MM, _truth, generate_fixture
+from easyon_scan.synthetic_garment import MEASURES_MM, _rotate_sewline_away_from_seams, _truth, generate_fixture
 from easyon_scan.assembly_v1 import validate_assembly_v1
 
 
@@ -105,13 +105,15 @@ def test_v1_serializes_reversed_mid_edge_sewline(size, tmp_path, monkeypatch):
         for panel in doc['panels']:
             vertices = list(reversed(panel['sewline'][:-1]))
             midpoint = [(vertices[1][axis] + vertices[2][axis]) / 2 for axis in (0, 1)]
-            panel['sewline'] = [midpoint] + vertices[2:] + vertices[:2] + [vertices[1], midpoint]
+            panel['sewline'] = [midpoint] + vertices[2:] + vertices[:2] + [midpoint]
         return doc
 
     monkeypatch.setattr(fixture, 'dxf_to_assembly', shifted)
     generate_fixture(tmp_path, (size,))
     v1 = json.loads((tmp_path / f'{size}.assembly-v1.json').read_text())
     assert not [i for i in validate_assembly_v1(v1, length_tolerance_mm=1) if i['level'] == 'error']
+    assert all(LineString([a, b]).length > 1e-8 for panel in v1['panels']
+               for a, b in zip(panel['sewline'], panel['sewline'][1:]))
     edges = {edge['id']: (panel, edge) for panel in v1['panels'] for edge in panel['edges']}
     measures = MEASURES_MM[size]
     expected = {'panel-1:e3': measures['body_height'] - 16,
@@ -124,6 +126,17 @@ def test_v1_serializes_reversed_mid_edge_sewline(size, tmp_path, monkeypatch):
         assert 0 <= lo < hi <= LineString(panel['sewline']).length
         assert hi - lo == pytest.approx(length)
     assert all(seam['ease_mm'] == pytest.approx(0) for seam in v1['seams'])
+
+
+def test_rotation_reuses_existing_origin_vertex():
+    panel = {'id': 'test', 'cutline': [[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]],
+             'sewline': [[0, 0], [1, 0], [2, 0], [2, 2], [0, 2], [0, 0]],
+             'edges': [{'id': 'free', 'from_mm': 0, 'to_mm': 2}]}
+    _rotate_sewline_away_from_seams(panel, set())
+    assert panel['sewline'][0] == panel['sewline'][-1] == [1, 0]
+    assert len(panel['sewline']) == 6
+    assert all(LineString([a, b]).length > 1e-8 for a, b in
+               zip(panel['sewline'], panel['sewline'][1:]))
 
 
 def test_reject_unknown_or_duplicate_sizes(tmp_path):
