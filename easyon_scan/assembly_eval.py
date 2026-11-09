@@ -24,6 +24,9 @@ def ranked_by_edge(proposals):
     by_edge = {}
     for (edge_id, _, _), items in groups.items():
         by_edge.setdefault(edge_id, []).extend(items)
+    for edge_id, items in by_edge.items():
+        by_edge[edge_id] = sorted({item['id']: item for item in items}.values(),
+                                  key=lambda p: (-p['score'], p['id']))
     return by_edge
 
 
