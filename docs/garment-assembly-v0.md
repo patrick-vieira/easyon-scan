@@ -35,9 +35,11 @@ read from `$INSUNITS`: `in` (1), `ft` (2), `mm` (4), `cm` (5), `m` (6), or
 `unitless` (0). Factors to mm are respectively 25.4, 304.8, 1, 10 and 1000.
 Unitless input requires `assume_units`; the declaration is retained separately
 as `source.assumed_units`, while `insunits_code` remains 0. Other codes fail.
-`source.size` is the supplied label, the common block `Size:` label, or null.
-Conflicting size labels or a supplied label inconsistent with the DXF fail;
-size is metadata, not a grading or multi-size selection operation.
+`source.size` is the selected label, the common block `Size Name:` or legacy
+`Size:` label, or null. Different size labels fail with "one size per file in
+v0" unless `--size` selects one; that option includes matching block scopes
+and excludes other labeled sizes. Unlabeled scopes remain included. This is
+only a block selection, not grading or interpretation of external rule files.
 
 The packaged [JSON Schema](../easyon_scan/schemas/garment-assembly-v0.schema.json)
 uses draft 2020-12. Required fields and structures are defined there. IDs are
@@ -47,11 +49,13 @@ stable for a given entity traversal, not across edits to the original DXF.
 
 Each panel has `id`, `name`, `cutline`, nullable `sewline`, `sewline_status`,
 nullable `grain`, boolean `on_fold`, `holes`, `edges`, and `provenance`.
+`quantity` is an optional verbatim string from `Quantity:`; it does not infer
+cut counts or left/right semantics.
 Rings repeat the first `[x,y]` point at the end. Holes are rings inside the
 outer ring, independent of winding. `grain` is a unit direction `[dx,dy]`;
-its sign has no construction meaning. Missing grain is null. `on_fold` defaults
-to false: fold semantics cannot be inferred from the supported DXF conventions
-and must be reviewed. `provenance` contains original DXF `handle`, `layer`, and
+its sign has no construction meaning. Missing grain is null. `on_fold` is true
+only for `Fold:Y` text in the piece scope; layer 6 and geometric symmetry do
+not imply a fold. `provenance` contains original DXF `handle`, `layer`, and
 `dxftype`; edges retain their outline entity's provenance.
 
 Plain exports use closed LWPOLYLINEs per outline layer, same-layer holes,
@@ -82,6 +86,21 @@ buffer with mitre joins, marked `hypothesis_offset`; empty/disconnected offsets
 fail. Its exterior is the hypothetical sewline; hole allowances are not modeled.
 Without either source, sewline is null and status is `missing`.
 
+## ASTM-style layer and text policy
+
+| Input in a piece block | v0 result / loss |
+| --- | --- |
+| Closed contour on 1 | Cutline and edges; geometry flattened at 0.1 mm. |
+| Closed contour on 14 | `sewline` with `from_dxf`; open lines are not joined. |
+| Pique on 4, 80–83 | Position and type retained; depth, width and angle are lost. |
+| LINE on 7 | Grain direction; other grain semantics are lost. |
+| `Piece Name:`, `Size Name:`, `Quantity:`, `Fold:Y` | Name, size, verbatim quantity and fold flag. Other system text is ignored. |
+| 8, 13, 15 | Internal markings, drill points and plot annotations are ignored. |
+| Closed contour on 11 | Treated as a hole when contained by a cutline in the same block; other 11 geometry has no supported meaning. |
+
+The input DXF remains unchanged. Keep it for review because ignored geometry,
+notch dimensions and grading data cannot be recovered from the v0 JSON.
+
 ## Edges, seams and review
 
 Edges split at turns of **30 degrees or greater**, at outline origin and at each
@@ -90,7 +109,8 @@ projected notch. Smooth flattened curve samples do not individually imply seams.
 vertex in its stored traversal direction; `length_mm = to_mm - from_mm`.
 `start_vertex` and `end_vertex` index the stored cutline, including inserted notch
 vertices and the repeated closing vertex. A notch's `at_mm` is local to its edge;
-`kind` is currently `notch`. A boundary notch belongs to the following edge,
+`kind` is `notch` for plain exports, `v_slit` for layer 4, and `t`, `castle`,
+`check`, `u` for layers 80–83. A boundary notch belongs to the following edge,
 except the closing endpoint belongs to the final edge. Holes have no seam edges
 in v0.
 

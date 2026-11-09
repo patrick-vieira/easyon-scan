@@ -226,7 +226,7 @@
                 "minimum": 0
               },
               "kind": {
-                "type": "string"
+                "enum": ["notch", "v_slit", "t", "castle", "check", "u"]
               }
             },
             "additionalProperties": false
@@ -296,6 +296,9 @@
         },
         "on_fold": {
           "type": "boolean"
+        },
+        "quantity": {
+          "type": "string"
         },
         "holes": {
           "type": "array",
