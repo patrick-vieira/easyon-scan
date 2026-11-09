@@ -5,10 +5,11 @@ import json
 from pathlib import Path
 
 import ezdxf
+from shapely.geometry import LineString
 
 from .assembly import dxf_to_assembly, validate_assembly
-from .assembly_v1 import migrate_v0, validate_assembly_v1
-from .assembly_eval import evaluate_proposals
+from .assembly_v1 import _digest, migrate_v0, validate_assembly_v1
+from .assembly_eval import _same, evaluate_proposals
 from .propose import propose_assembly
 
 # Explicit fixture table, not a size grading rule or real-body measurements.
@@ -23,6 +24,14 @@ def _rectangle(width, height):
     return [(0, 0), (width, 0), (width, height), (0, height)]
 
 
+def _outline(width, height, split_top=False):
+    points = [(0, 0), (width / 2, 0), (width, 0), (width, height)]
+    if split_top:
+        points.append((width / 2, height))
+    points.append((0, height))
+    return points
+
+
 def _dxf(size):
     m = MEASURES_MM[size]
     pieces = [
@@ -30,8 +39,8 @@ def _dxf(size):
         ('Back', m['body_width'], m['body_height']),
         ('Side Left', m['side_width'], m['body_height']),
         ('Side Right', m['side_width'], m['body_height']),
-        ('Shoulder Left', m['shoulder_width'], m['shoulder_height']),
-        ('Shoulder Right', m['shoulder_width'], m['shoulder_height']),
+        ('Shoulder Left', m['shoulder_width'] / 2, m['shoulder_height']),
+        ('Shoulder Right', m['shoulder_width'] / 2, m['shoulder_height']),
     ]
     previous = ezdxf.options.write_fixed_meta_data_for_testing
     ezdxf.options.write_fixed_meta_data_for_testing = True
@@ -44,9 +53,11 @@ def _dxf(size):
         doc.layers.new(layer)
     for index, (name, width, height) in enumerate(pieces):
         block = doc.blocks.new(f'PIECE_{index + 1}')
-        block.add_lwpolyline(_rectangle(width, height), close=True, dxfattribs={'layer': '1'})
+        block.add_lwpolyline(_outline(width, height, name in ('Front', 'Back')), close=True, dxfattribs={'layer': '1'})
         block.add_lwpolyline([(8, 8), (width - 8, 8), (width - 8, height - 8), (8, height - 8)], close=True, dxfattribs={'layer': '14'})
-        block.add_point((width / 2, 0), dxfattribs={'layer': '4'})
+        if name in ('Front', 'Back'):
+            block.add_point((width / 2, 0), dxfattribs={'layer': '4'})
+            block.add_point((width / 2, height), dxfattribs={'layer': '4'})
         block.add_line((width / 2, 12), (width / 2, height - 12), dxfattribs={'layer': '7'})
         for row, label in enumerate((f'Piece Name: {name}', f'Size Name: {size}', 'Quantity: 1')):
             block.add_text(label, dxfattribs={'layer': '0', 'height': 3, 'insert': (12, 15 + row * 6)})
@@ -63,15 +74,46 @@ def _dxf(size):
 
 def _truth(assembly):
     panels = {p['name']: p for p in assembly['panels']}
-    # Adapter splits the bottom edge at the central notch; side/top edges retain indices.
-    pairs = [('Front', 3, 'Side Left', 5), ('Back', 5, 'Side Right', 3),
-             ('Front', 4, 'Shoulder Left', 4), ('Back', 4, 'Shoulder Right', 4)]
+    # Each side and shoulder bridge has one edge on the front and one on the back.
+    def edge_index(name, axis, first):
+        panel = panels[name]
+        line = LineString(panel['cutline'])
+        found = []
+        for index, edge in enumerate(panel['edges'], 1):
+            start, end = (line.interpolate(edge[k]) for k in ('from_mm', 'to_mm'))
+            if (axis == 'vertical' and abs(start.x - end.x) < 1e-6 or
+                    axis == 'horizontal' and abs(start.y - end.y) < 1e-6):
+                found.append((min(start.x, end.x) if axis == 'vertical' else min(start.y, end.y), index))
+        found.sort()
+        return found[0 if first else -1][1]
+    sl_right = edge_index('Side Left', 'vertical', False)
+    sl_left = edge_index('Side Left', 'vertical', True)
+    sr_right = edge_index('Side Right', 'vertical', False)
+    sr_left = edge_index('Side Right', 'vertical', True)
+    shl_bottom = edge_index('Shoulder Left', 'horizontal', True)
+    shl_top = edge_index('Shoulder Left', 'horizontal', False)
+    shr_bottom = edge_index('Shoulder Right', 'horizontal', True)
+    shr_top = edge_index('Shoulder Right', 'horizontal', False)
+    pairs = [('Front', 6, 'Side Left', sl_right), ('Back', 6, 'Side Left', sl_left),
+             ('Front', 3, 'Side Right', sr_left), ('Back', 3, 'Side Right', sr_right),
+             ('Front', 5, 'Shoulder Left', shl_top), ('Back', 5, 'Shoulder Left', shl_bottom),
+             ('Front', 4, 'Shoulder Right', shr_top), ('Back', 4, 'Shoulder Right', shr_bottom)]
     result = []
     for left, ai, right, bi in pairs:
         a, b = panels[left]['edges'][ai - 1], panels[right]['edges'][bi - 1]
+        if abs(a['length_mm'] - b['length_mm']) > 1e-6:
+            raise ValueError(f'Incompatible seam lengths: {left}/{right}')
+        def direction(panel, edge):
+            line = LineString(panel['cutline'])
+            start, end = (line.interpolate(edge[k]) for k in ('from_mm', 'to_mm'))
+            return (end.x - start.x, end.y - start.y)
+        va, vb = direction(panels[left], a), direction(panels[right], b)
+        dot = va[0] * vb[0] + va[1] * vb[1]
+        if abs(abs(dot) - a['length_mm'] * b['length_mm']) > 1e-5:
+            raise ValueError(f'Nonparallel seam: {left}/{right}')
         result.append({'a': {'edge_id': a['id'], 'start_mm': 0., 'end_mm': a['length_mm']},
                        'b': {'edge_id': b['id'], 'start_mm': 0., 'end_mm': b['length_mm']},
-                       'orientation': 'reversed', 'construction': 'plain'})
+                       'orientation': 'same' if dot > 0 else 'reversed', 'construction': 'plain'})
     return result
 
 
@@ -92,18 +134,56 @@ def generate_fixture(out, sizes=('P', 'M', 'G')):
         errors = [i for i in validate_assembly(v0) if i['level'] == 'error']
         if errors:
             raise ValueError(f'Invalid synthetic v0: {errors}')
+        truth = _truth(v0)
+        proposed = propose_assembly(v0)
         v1 = migrate_v0(v0)
+        edge_map = {e['id']: e for panel in v1['panels'] for e in panel['edges']}
+        for pair in truth:
+            for ref in (pair['a'], pair['b']):
+                edge_map[ref['edge_id']]['sewline_interval_mm'] = [0., ref['end_mm']]
+        for index, pair in enumerate(truth, 1):
+            a, b = pair['a'], pair['b']
+            matches = [{'a_mm': 0., 'b_mm': b['end_mm'] if pair['orientation'] == 'reversed' else 0.},
+                       {'a_mm': a['end_mm'], 'b_mm': 0. if pair['orientation'] == 'reversed' else b['end_mm']}]
+            proposal = dict(id=f'fixture:{index}', **pair, matches=matches, allowance_mm={'a': None, 'b': None},
+                            ease_mm=0., score=1., signals=[], model_version='synthetic-truth/v1',
+                            created_at=None, status='proposed')
+            proposal['content_sha256'] = _digest(proposal)
+            v1['proposals'].append(proposal)
+            v1['review']['decisions'].append(dict(action='accept', proposal_id=proposal['id'],
+                before_sha256=proposal['content_sha256'], reviewer='synthetic-fixture',
+                at='2026-01-01T00:00:00Z', reason='Known synthetic geometry'))
+            v1['seams'].append({k: proposal[k] for k in ('a', 'b', 'orientation', 'matches', 'construction', 'allowance_mm', 'ease_mm')}
+                               | {'id': f'seam:{index}', 'proposal_id': proposal['id']})
         errors = [i for i in validate_assembly_v1(v1, length_tolerance_mm=1) if i['level'] == 'error']
         if errors:
             raise ValueError(f'Invalid synthetic v1: {errors}')
-        truth = _truth(v0)
         paired = {ref['edge_id'] for pair in truth for ref in (pair['a'], pair['b'])}
         free_edges = [edge['id'] for panel in v0['panels'] for edge in panel['edges'] if edge['id'] not in paired]
-        candidates = propose_assembly(v0)['proposals']
+        candidates = proposed['proposals']
         normalized = [{'id': p['id'], 'a': {'edge_id': p['a'], 'start_mm': 0., 'end_mm': next(e['length_mm'] for q in v0['panels'] for e in q['edges'] if e['id'] == p['a'])},
                        'b': {'edge_id': p['b'], 'start_mm': 0., 'end_mm': next(e['length_mm'] for q in v0['panels'] for e in q['edges'] if e['id'] == p['b'])},
                        'orientation': p['orientation'], 'construction': p['construction'], 'score': p['score']} for p in candidates]
         report = evaluate_proposals(normalized, truth, endpoint_tolerance_mm=1)
+        ranked = sorted(normalized, key=lambda p: (-p['score'], p['id']))
+        by_source = {}
+        for candidate in ranked:
+            by_source.setdefault(candidate['a']['edge_id'], []).append(candidate)
+        report['pair_diagnostics'] = []
+        for pair in truth:
+            matching = [(rank, candidate) for source in (pair['a']['edge_id'], pair['b']['edge_id'])
+                        for rank, candidate in enumerate(by_source.get(source, []), 1)
+                        if _same(candidate, pair, 1)]
+            rank, candidate = min(matching, key=lambda item: item[0]) if matching else (None, None)
+            report['pair_diagnostics'].append({'a': pair['a']['edge_id'], 'b': pair['b']['edge_id'],
+                'rank': rank, 'in_top3': rank is not None and rank <= 3,
+                'orientation': None if candidate is None else candidate['orientation'],
+                'orientation_correct': candidate is not None and candidate['orientation'] == pair['orientation'],
+                'construction': None if candidate is None else candidate['construction'],
+                'failure': 'pair_missing' if candidate is None else
+                           'rank_below_3' if rank > 3 else
+                           'orientation_unknown_or_wrong' if candidate['orientation'] != pair['orientation'] else
+                           'construction_unresolved' if candidate['construction'] != pair['construction'] else None})
         artifacts = {f'{size}.dxf': raw, f'{size}.assembly-v0.json': _json_bytes(v0),
                      f'{size}.assembly-v1.json': _json_bytes(v1), f'{size}.truth.json': _json_bytes({'pairs': truth, 'free_edges': free_edges}),
                      f'{size}.evaluation.json': _json_bytes(report)}
