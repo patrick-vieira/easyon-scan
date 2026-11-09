@@ -4,6 +4,9 @@ import json
 
 import pytest
 import ezdxf
+from shapely.geometry import LineString
+
+from easyon_scan.assembly_eval import evaluate_proposals
 
 from easyon_scan.synthetic_garment import MEASURES_MM, _truth, generate_fixture
 from easyon_scan.assembly_v1 import validate_assembly_v1
@@ -36,6 +39,34 @@ def test_fixture_is_deterministic_and_importable(tmp_path):
             tuple(sorted((body, bridge))) for body in ('Front', 'Back')
             for bridge in ('Side Left', 'Side Right', 'Shoulder Left', 'Shoulder Right')}
         assert all(pair['construction'] == 'plain' for pair in truth['pairs'])
+        expected = [('panel-1:e6', 'panel-3:e2', 'reversed'),
+                    ('panel-2:e6', 'panel-3:e4', 'same'),
+                    ('panel-1:e3', 'panel-4:e4', 'reversed'),
+                    ('panel-2:e3', 'panel-4:e2', 'same'),
+                    ('panel-1:e5', 'panel-5:e3', 'same'),
+                    ('panel-2:e5', 'panel-5:e1', 'reversed'),
+                    ('panel-1:e4', 'panel-6:e3', 'same'),
+                    ('panel-2:e4', 'panel-6:e1', 'reversed')]
+        assert [(p['a']['edge_id'], p['b']['edge_id'], p['orientation'])
+                for p in truth['pairs']] == expected
+        edges = {e['id']: (panel, e) for panel in v1['panels'] for e in panel['edges']}
+        for pair, seam in zip(truth['pairs'], v1['seams']):
+            lengths = []
+            for ref in (pair['a'], pair['b']):
+                panel, edge = edges[ref['edge_id']]
+                cut, sew = LineString(panel['cutline']), LineString(panel['sewline'])
+                actual = sorted(sew.project(cut.interpolate(edge[key]))
+                                for key in ('from_mm', 'to_mm'))
+                assert edge['sewline_interval_mm'] == pytest.approx(actual)
+                lengths.append(actual[1] - actual[0])
+            assert seam['ease_mm'] == pytest.approx(lengths[0] - lengths[1])
+        assert edges['panel-1:e3'][1]['sewline_interval_mm'][1] - edges['panel-1:e3'][1]['sewline_interval_mm'][0] < MEASURES_MM[size]['body_height']
+        assert report['top3']['geometry_tp'] >= report['top1']['geometry_tp']
+        assert report['top1']['tp'] == report['top3']['tp'] == 0
+        assert report['top3']['geometry_tp'] > 0
+        assert [row['rank'] for row in report['pair_diagnostics']] == [None, None, None, 3, 6, 5, 8, 7]
+        assert any(row['failure'] == 'rank_below_3' for row in report['pair_diagnostics'])
+
         assert report['top3']['truth'] == 8
         assert len(report['pair_diagnostics']) == 8
         assert report['top1']['tp'] == 0  # The current proposer does not declare construction.
@@ -64,3 +95,38 @@ def test_reject_unknown_or_duplicate_sizes(tmp_path):
     for sizes in ((), ('X',), ('P', 'P')):
         with pytest.raises(ValueError):
             generate_fixture(tmp_path, sizes)
+
+
+def test_truth_rejects_actual_equal_length_edge_swap_and_bad_parallelism(tmp_path):
+    generate_fixture(tmp_path, ('M',))
+    original = json.loads((tmp_path / 'M.assembly-v0.json').read_text())
+    import copy
+    swapped = copy.deepcopy(original)
+    front = next(p for p in swapped['panels'] if p['name'] == 'Front')
+    front['edges'][3], front['edges'][4] = front['edges'][4], front['edges'][3]
+    with pytest.raises(ValueError, match='Unexpected body edge position'):
+        _truth(swapped)
+    tilted = copy.deepcopy(original)
+    side = next(p for p in tilted['panels'] if p['name'] == 'Side Left')
+    side['cutline'][2][0] += 2
+    with pytest.raises(ValueError, match='Nonparallel seam'):
+        _truth(tilted)
+
+
+def test_geometry_ranking_changes_and_construction_is_explicit():
+    def ref(edge):
+        return {'edge_id': edge, 'start_mm': 0., 'end_mm': 10.}
+    truth = [dict(a=ref('a'), b=ref('b'), orientation='same', construction='plain')]
+    decoys = [dict(id=f'd{i}', a=ref('a'), b=ref(f'x{i}'), score=1-i*.1,
+                   orientation='same', construction=None) for i in range(3)]
+    hit = dict(id='hit', a=ref('a'), b=ref('b'), score=.1,
+               orientation='same', construction=None)
+    b_decoy = dict(id='bd', a=ref('b'), b=ref('z'), score=1.5,
+                   orientation='same', construction=None)
+    low = evaluate_proposals(decoys + [b_decoy, hit], truth, endpoint_tolerance_mm=0)
+    high = evaluate_proposals(decoys + [b_decoy, dict(hit, score=2)], truth, endpoint_tolerance_mm=0)
+    assert low['top3']['geometry_tp'] == 1  # b participates even when a ranks fourth.
+    assert high['top1']['geometry_tp'] == 1
+    assert low['top1']['geometry_tp'] == 0
+    assert high['top1']['construction_errors'] == 1
+    assert high['top1']['tp'] == 0
