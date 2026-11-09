@@ -74,7 +74,7 @@ def test_fixture_is_deterministic_and_importable(tmp_path):
         assert report['top3']['truth'] == 8
         assert len(report['pair_diagnostics']) == 8
         assert report['top1']['tp'] == 0  # The current proposer does not declare construction.
-        assert all(row['failure'] in {'pair_missing', 'rank_below_3',
+        assert all(row['failure'] in {'pair_missing', 'rank_below_3', 'matches_wrong',
                    'orientation_unknown_or_wrong', 'construction_unresolved'} for row in report['pair_diagnostics'])
         dxf = ezdxf.readfile(a / f'{size}.dxf')
         assert dxf.units == 4
@@ -188,7 +188,8 @@ def test_ranking_orders_multiple_intervals_on_same_edge():
         {'id': 'high', 'a': ref('a', 10), 'b': ref('c', 0), 'score': .9},
         {'id': 'tie', 'a': ref('a', 20), 'b': ref('d', 0), 'score': .9},
     ]
-    assert [p['id'] for p in ranked_by_edge(proposals)['a']] == ['high', 'tie', 'low']
+    assert [p['id'] for p in ranked_by_edge(proposals)[('a', 0., 10.)]] == ['low']
+    assert len(ranked_by_edge(proposals)) == 6
 
 
 def test_score_tie_has_deterministic_rank_and_top3_uses_either_edge():
@@ -201,9 +202,9 @@ def test_score_tie_has_deterministic_rank_and_top3_uses_either_edge():
     proposals += [dict(id=f'b{i}', a=ref('b'), b=ref(f'q{i}'), score=1.,
                        orientation='same', construction='plain') for i in range(3)]
     result = evaluate_proposals(list(reversed(proposals)), truth, endpoint_tolerance_mm=0)
-    assert [p['id'] for p in ranked_by_edge(proposals)['a']] == ['aa', 'ab', 'ac', 'hit']
-    assert result['score_ties']['a'][0] == {'score': .8, 'ids': ['aa', 'ab', 'ac', 'hit']}
-    assert result['rank_rule'].endswith('either edge')
+    assert [p['id'] for p in ranked_by_edge(proposals)[('a', 0., 10.)]] == ['aa', 'ab', 'ac', 'hit']
+    assert result['score_ties'][str(('a', 0., 10.))][0] == {'score': .8, 'ids': ['aa', 'ab', 'ac', 'hit']}
+    assert result['rank_rule'].endswith('either canonical segment')
     assert result['top1']['geometry_tp'] == 0
     assert result['top3']['geometry_tp'] == 0  # hit ranks fourth on a and b.
     promoted = evaluate_proposals([p for p in proposals if p['id'] != 'b2'], truth, endpoint_tolerance_mm=0)

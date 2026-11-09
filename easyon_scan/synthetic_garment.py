@@ -9,7 +9,7 @@ from shapely.geometry import LineString
 
 from .assembly import dxf_to_assembly, validate_assembly
 from .assembly_v1 import _digest, migrate_v0, validate_assembly_v1
-from .assembly_eval import _same, evaluate_proposals, ranked_by_edge
+from .assembly_eval import _same, _matches, evaluate_proposals, ranked_by_edge
 from .propose import propose_assembly, sewline_interval_mm
 
 # Explicit fixture table, not a size grading rule or real-body measurements.
@@ -209,11 +209,12 @@ def generate_fixture(out, sizes=('P', 'M', 'G')):
             a, b = pair['a'], pair['b']
             matches = [{'a_mm': 0., 'b_mm': b['end_mm'] if pair['orientation'] == 'reversed' else 0.},
                        {'a_mm': a['end_mm'], 'b_mm': 0. if pair['orientation'] == 'reversed' else b['end_mm']}]
+            pair['matches'] = matches
             def sew_length(ref):
                 edge = edge_map[ref['edge_id']]
                 lo, hi = edge['sewline_interval_mm']
                 return (hi - lo) * (ref['end_mm'] - ref['start_mm']) / edge['length_mm']
-            proposal = dict(id=f'fixture:{index}', **pair, matches=matches, allowance_mm={'a': None, 'b': None},
+            proposal = dict(id=f'fixture:{index}', **pair, allowance_mm={'a': None, 'b': None},
                             ease_mm=sew_length(a) - sew_length(b), score=1., signals=[], model_version='synthetic-truth/v1',
                             created_at=None, status='proposed')
             proposal['content_sha256'] = _digest(proposal)
@@ -231,28 +232,29 @@ def generate_fixture(out, sizes=('P', 'M', 'G')):
         candidates = proposed['proposals']
         normalized = [{'id': p['id'], 'a': {'edge_id': p['a'], 'start_mm': 0., 'end_mm': next(e['length_mm'] for q in v0['panels'] for e in q['edges'] if e['id'] == p['a'])},
                        'b': {'edge_id': p['b'], 'start_mm': 0., 'end_mm': next(e['length_mm'] for q in v0['panels'] for e in q['edges'] if e['id'] == p['b'])},
-                       'orientation': p['orientation'], 'construction': p['construction'], 'score': p['score']} for p in candidates]
+                       'matches': p['matches'], 'orientation': p['orientation'], 'construction': p['construction'], 'score': p['score']} for p in candidates]
         report = evaluate_proposals(normalized, truth, endpoint_tolerance_mm=1)
         by_edge = ranked_by_edge(normalized)
         report['pair_diagnostics'] = []
         for pair in truth:
-            matching = [(rank, candidate) for source in (pair['a']['edge_id'], pair['b']['edge_id'])
-                        for rank, candidate in enumerate(by_edge.get(source, []), 1)
+            matching = [(rank, candidate) for items in by_edge.values()
+                        for rank, candidate in enumerate(items, 1)
                         if _same(candidate, pair, 1)]
             rank, candidate = min(matching, key=lambda item: (item[0], item[1]['id'])) if matching else (None, None)
-            tied = [] if candidate is None else sorted({p['id'] for source in (pair['a']['edge_id'], pair['b']['edge_id'])
+            tied = [] if candidate is None else sorted({p['id'] for source in ((r['edge_id'], r['start_mm'], r['end_mm']) for r in (candidate['a'], candidate['b']))
                 for p in by_edge.get(source, []) if p['score'] == candidate['score']})
             report['pair_diagnostics'].append({'a': pair['a']['edge_id'], 'b': pair['b']['edge_id'],
                 'rank': rank, 'in_top3': rank is not None and rank <= 3,
                 'score': None if candidate is None else candidate['score'],
                 'score_tied_with': [identifier for identifier in tied if identifier != candidate['id']],
-                'rank_rule': 'score_desc_then_id_asc; candidate selected at either edge',
+                'rank_rule': 'score_desc_then_id_asc; candidate selected at either canonical segment',
                 'orientation': None if candidate is None else candidate['orientation'],
                 'orientation_correct': candidate is not None and candidate['orientation'] == pair['orientation'],
                 'construction': None if candidate is None else candidate['construction'],
                 'failure': 'pair_missing' if candidate is None else
                            'rank_below_3' if rank > 3 else
                            'orientation_unknown_or_wrong' if candidate['orientation'] != pair['orientation'] else
+                           'matches_wrong' if not _matches(candidate, pair, 1) else
                            'construction_unresolved' if candidate['construction'] != pair['construction'] else None})
         artifacts = {f'{size}.dxf': raw, f'{size}.assembly-v0.json': _json_bytes(v0),
                      f'{size}.assembly-v1.json': _json_bytes(v1), f'{size}.truth.json': _json_bytes({'pairs': truth, 'free_edges': free_edges}),
