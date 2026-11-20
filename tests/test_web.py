@@ -16,7 +16,8 @@ def test_languages(path, lang, html_lang, title):
     assert title in html
     assert '<meta name="viewport"' in html
     assert '<details>' in html
-    assert 'https://' not in html
+    assert 'src="https://' not in html
+    assert 'src="http://' not in html
     assert response.headers['Cache-Control'] == 'no-store'
 
 
@@ -28,16 +29,19 @@ def test_default_fallback_and_translation_parity():
     html = client.get('/').get_data(as_text=True)
     for key in ['a4', 'letter', 'card', 'bic', 'phone:iphone-15', 'phone:galaxy-s24']:
         assert f'value="{key}"' in html
-    assert 'easyon-scan.pt.vtt' in html and 'easyon-scan.en.vtt' in html
-    assert 'easyon-scan-poster.jpg' in html
+    assert 'https://github.com/patrick-vieira/easyon-scan/blob/main/docs/easyon-scan.mp4' in html
+    assert '<video' not in html
+    assert '>Ver vídeo explicativo</a>' in html
+    assert '>Watch explainer video</a>' in client.get('/?lang=en').get_data(as_text=True)
 
 
 def test_media_is_local_and_allowlisted():
     client = web.create_app().test_client()
-    for name in ['easyon-scan.mp4', 'easyon-scan-poster.jpg', 'easyon-scan.pt.vtt', 'easyon-scan.en.vtt']:
+    for name in ['easyon-scan-poster.jpg', 'easyon-scan.pt.vtt', 'easyon-scan.en.vtt']:
         response = client.get('/media/' + name, headers={'Range':'bytes=0-99'})
         assert response.status_code in (200, 206)
         assert response.data
+    assert client.get('/media/easyon-scan.mp4').status_code == 404
     assert client.get('/media/README.md').status_code == 404
     assert client.get('/static/style.css').status_code == 200
 
