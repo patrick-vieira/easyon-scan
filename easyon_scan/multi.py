@@ -121,7 +121,11 @@ def grid_calibration(image, contour, scale, pitch):
             x=(v[2]+v[1]*h[2])/(1-v[1]*h[1]); y=h[1]*x+h[2]
             pixels.append([x,y]);world.append([ix*pitch,iy*pitch])
     pixels=np.float32(pixels);world=np.float32(world)
-    H,inliers=cv.findHomography(pixels,world,cv.RANSAC,pitch*.12)
+    # A consistent lattice needs no random sample selection. RANSAC can
+    # discard valid rows on densely sampled, nearly exact synthetic grids.
+    H,inliers=cv.findHomography(pixels,world,0)
+    if H is None or np.max(np.linalg.norm(project(pixels,H)-world,axis=1))>pitch*.12:
+        H,inliers=cv.findHomography(pixels,world,cv.RANSAC,pitch*.12)
     if H is None or inliers.mean()<.85: return None
     residual=float(np.sqrt(np.mean(np.sum((project(pixels,H)-world)**2,axis=1))))
     if residual>pitch*.15: return None

@@ -87,7 +87,25 @@ def dxf_bytes(contour_mm, *, mode="plain", size="BASE", piece_names=None):
                     polyline(xy, "8" if mode == "aama" else name, closed=name != "INTERNAL")
     stream = StringIO()
     doc.write(stream)
-    return doc.encode(stream.getvalue()) if mode == "aama" else stream.getvalue().encode("utf-8")
+    if mode == "aama":
+        # ezdxf 1.4.3 emits lowercase hex while its Unicode decoder accepts
+        # uppercase A-F only. Escape unencodable characters before encoding,
+        # so adjacent text or existing escapes are never rewritten.
+        text = stream.getvalue()
+        replacements = {}
+        for char in set(text):
+            try:
+                char.encode(doc.output_encoding)
+            except UnicodeEncodeError:
+                # DXF Unicode escapes contain exactly four hex digits.
+                # Supplementary characters use UTF-16 surrogate pairs.
+                units = char.encode("utf-16-be")
+                replacements[ord(char)] = "".join(
+                    f"\\U+{int.from_bytes(units[i:i+2], 'big'):04X}"
+                    for i in range(0, len(units), 2)
+                )
+        return doc.encode(text.translate(replacements))
+    return stream.getvalue().encode("utf-8")
 
 
 def export_dxf(contour_mm, out, **options):

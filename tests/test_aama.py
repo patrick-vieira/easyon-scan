@@ -87,3 +87,19 @@ def test_aama_non_ascii_names(tmp_path):
     assert text == 'Piece Name: Frente — verão'
     from ezdxf.lldxf.encoding import decode_dxf_unicode
     assert decode_dxf_unicode(next(iter(doc.blocks['PIECE_002'].query('TEXT'))).dxf.text) == 'Piece Name: 背面'
+
+
+def test_aama_unicode_escapes_preserve_adjacent_text_and_non_bmp(tmp_path):
+    from ezdxf.lldxf.encoding import decode_dxf_unicode
+    path = tmp_path / 'unicode-adjacent.dxf'
+    names = ['背face', '🧵cafe']
+    export_dxf(fixture(), path, mode='aama', piece_names=names)
+    doc = ezdxf.readfile(path)
+    for index, name in enumerate(names, 1):
+        text = next(iter(doc.blocks[f'PIECE_{index:03d}'].query('TEXT'))).dxf.text
+        decoded = decode_dxf_unicode(text)
+        # ezdxf decodes each four-digit escape separately; combine the UTF-16
+        # surrogate pair to compare the actual supplementary character.
+        decoded = decoded.encode('utf-16-le', errors='surrogatepass').decode('utf-16-le')
+        assert decoded == 'Piece Name: ' + name
+    assert b'\\U+D83E\\U+DDF5cafe' in path.read_bytes()

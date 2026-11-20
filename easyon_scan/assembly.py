@@ -34,7 +34,9 @@ def _edges(ring, marks, panel_id, provenance):
     distances = [0.]
     for a, b in zip(ring, ring[1:]):
         distances.append(distances[-1] + math.dist(a, b))
-    cuts = {0., line.length}
+    perimeter = distances[-1]
+    snap_tolerance = max(1e-12, 8 * math.ulp(perimeter))
+    cuts = {0., perimeter}
     for i in range(len(ring) - 1):
         prev, here, nxt = ring[i-1 if i else -2], ring[i], ring[i+1]
         u = [here[k]-prev[k] for k in (0, 1)]
@@ -42,11 +44,22 @@ def _edges(ring, marks, panel_id, provenance):
         norm = math.hypot(*u) * math.hypot(*v)
         if norm and math.degrees(math.acos(max(-1., min(1., sum(a*b for a,b in zip(u,v))/norm)))) >= CORNER_DEGREES:
             cuts.add(distances[i])
-    projected = [(line.project(Point(p)), kind) for p, kind in marks]
+    projected = []
+    anchors = list(distances)
+    for point, kind in marks:
+        position = min(perimeter, max(0., line.project(Point(point))))
+        nearest = min(anchors, key=lambda s: abs(s-position))
+        if abs(nearest-position) <= snap_tolerance:
+            position = nearest
+        else:
+            anchors.append(position)
+        projected.append((position, kind))
     cuts.update(s for s, _ in projected)
     # Insert projected notch vertices so edge indices refer to the output ring.
     positions = sorted(set(distances) | cuts)
-    vertices = [list(line.interpolate(s).coords[0]) for s in positions]
+    original_vertices = dict(zip(distances, ring))
+    vertices = [list(original_vertices[s]) if s in original_vertices
+                else list(line.interpolate(s).coords[0]) for s in positions]
     indices = {s: i for i, s in enumerate(positions)}
     cuts = sorted(cuts)
     edges = []
@@ -55,21 +68,25 @@ def _edges(ring, marks, panel_id, provenance):
             continue
         # A boundary notch belongs to the following edge, except at closure.
         notches = [dict(at_mm=s-start, kind=kind) for s, kind in projected
-                   if start <= s < end or (end == line.length and s == end)]
+                   if start <= s < end or (end == perimeter and s == end)]
         edges.append(dict(id=f'{panel_id}:e{len(edges)+1}', from_mm=start, to_mm=end,
                           length_mm=end-start, start_vertex=indices[start],
                           end_vertex=indices[end], notches=notches, provenance=provenance.copy()))
     return vertices, edges
 
 
-def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowance_mm=None):
+def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowance_mm=None,
+                    _raw_doc=None):
     """Read a DXF path or bytes; unitless inputs require explicit units.
 
     Curves flatten at 0.1 mm chord tolerance; turns >=30 degrees split edges.
     Offsets are hypotheses only and are rejected if empty or disconnected.
     """
     raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
-    doc = ezdxf.decode_base64(base64.b64encode(raw))
+    from .dxf_adapter import MAX_BYTES
+    if len(raw) > MAX_BYTES:
+        raise ValueError("DXF exceeds 10 MB limit")
+    doc = _raw_doc or ezdxf.decode_base64(base64.b64encode(raw))
     code = int(doc.header.get('$INSUNITS', 0))
     if code == 0:
         assumed = {name: scale for name, scale in UNITS.values()}

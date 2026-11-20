@@ -141,10 +141,16 @@ def measure(source, layout="free", profile=None, *, quality_only=False, marker_s
     params.cornerRefinementMethod = cv.aruco.CORNER_REFINE_APRILTAG
     corners, ids, _ = cv.aruco.ArucoDetector(dictionary(), params).detectMarkers(gray)
     found = {} if ids is None else {int(i): c.reshape(4, 2) for i, c in zip(ids.ravel(), corners)}
+    if ids is not None and len(found) != len(ids):
+        raise ScanError("Duplicate marker IDs")
+    # cornerSubPix needs its complete search window inside the photograph.
+    # Border-touching detections cannot provide reliable refined corners.
+    height, width = gray.shape
+    found = {i: c for i, c in found.items() if
+             np.all((c[:, 0] >= 6) & (c[:, 0] < width - 6) &
+                    (c[:, 1] >= 6) & (c[:, 1] < height - 6))}
     if len(found) < 4 or (layout == "fixed" and not all(i in found for i in range(4))):
         raise ScanError("Need at least four ArUco markers, fully visible (fixed: IDs 0–3)")
-    if len(found) != len(ids):
-        raise ScanError("Duplicate marker IDs")
     selected = sorted(found) if layout == "free" else list(range(4))
     if saved is not None and any(i not in saved for i in selected):
         raise ScanError("Detected marker missing from saved layout")
