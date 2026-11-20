@@ -12,8 +12,8 @@ def project(points, h):
 def free_homography(photo, sizes=None):
     """Fix the first marker as the coordinate gauge; jointly fit all corners.
 
-    Damped Gauss–Newton iterations optimize image→plane homography and the
-    other markers' rigid poses. Residuals and damping are in millimetres.
+    Gauss–Newton iterations optimize image→plane homography and the other
+    markers' rigid poses. Residuals are in millimetres.
     """
     groups = photo.reshape(-1, 4, 2)
     from .layout import square
@@ -45,7 +45,7 @@ def free_homography(photo, sizes=None):
         matrix, world = unpack(p)
         return (project(photo, matrix) - world).ravel()
 
-    for _ in range(500):
+    for _ in range(60):
         r = residual(state)
         old_norm = np.linalg.norm(r)
         steps = 1e-6 * np.maximum(1., np.abs(state))
@@ -55,8 +55,19 @@ def free_homography(photo, sizes=None):
         scale = np.maximum(np.linalg.norm(jac, axis=0), 1e-12)
         j = jac / scale
         accepted = False
-        for damping in (1e-8, 1e-5, .001, .1, 10):
-            delta = np.linalg.solve(j.T @ j + damping*np.eye(len(state)), -j.T @ r) / scale
+        # Solve the Jacobian directly: normal equations square its condition
+        # number, and even tiny fixed damping can stall a well-posed fit.
+        singular = np.linalg.svd(j, compute_uv=False)
+        dampings = (0., 1e-8, 1e-5, .001, .1, 10)
+        if singular[-1] <= singular[0] * 1e-12:
+            dampings = dampings[1:]
+        for damping in dampings:
+            if damping:
+                system = np.vstack((j, np.sqrt(damping) * np.eye(len(state))))
+                target = np.r_[-r, np.zeros(len(state))]
+            else:
+                system, target = j, -r
+            delta = np.linalg.lstsq(system, target, rcond=None)[0] / scale
             candidate_norm = np.linalg.norm(residual(state + delta))
             if np.isfinite(candidate_norm) and candidate_norm < old_norm:
                 old_world = unpack(state)[1]
@@ -66,9 +77,6 @@ def free_homography(photo, sizes=None):
         if not accepted:
             break
         displacement = np.max(np.linalg.norm(unpack(state)[1] - old_world, axis=1))
-        # Bound work once the fitted corner RMS is below the 0.1 mm fit target.
-        if candidate_norm / np.sqrt(len(photo)) < .1:
-            break
         if (old_norm - candidate_norm < 1e-10 * max(1., old_norm)
                 and displacement < 1e-5):
             break

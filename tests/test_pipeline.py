@@ -128,8 +128,12 @@ def test_free_homography_converges_after_five_iterations():
     h = np.array([[2., .2, 1000.], [.1, 2., 900.],
                   [rng.uniform(-.0015, .0015), rng.uniform(-.0015, .0015), 1.]])
     photo = project(np.concatenate(world), h)
-    _, _, residual_mm = free_homography(photo)
-    assert residual_mm < .1  # The former five-iteration fit leaves 1.93 mm.
+    inverse, recovered, residual_mm = free_homography(photo)
+    assert residual_mm < 1e-5  # The former five-iteration fit leaves 1.93 mm.
+    true_world = np.concatenate(world)
+    rotation = np.linalg.lstsq(world[0][1:] - world[0][0], SQUARE[1:], rcond=None)[0]
+    np.testing.assert_allclose(recovered, (true_world - world[0][0]) @ rotation, atol=1e-4)
+    np.testing.assert_allclose(project(photo, inverse), recovered, atol=1e-4)
 
 
 def test_metric_residual_detects_inconsistent_square():
