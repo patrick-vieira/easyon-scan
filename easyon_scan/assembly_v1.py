@@ -130,6 +130,7 @@ def validate_assembly_v1(doc, *, length_tolerance_mm):
     if issues:
         return issues
     base = copy.deepcopy(doc)
+    base.pop('pattern_geometry', None)
     base['schema'] = 'garment-assembly/v0'
     for key in ('landmarks', 'proposals', 'operations'):
         base.pop(key)
@@ -142,6 +143,9 @@ def validate_assembly_v1(doc, *, length_tolerance_mm):
             edge.pop('semantic_label')
             edge.pop('sewline_interval_mm')
     issues.extend(validate_assembly(base))
+    if 'pattern_geometry' in doc:
+        from .assembly_geometry import _validate_geometry
+        issues.extend(_validate_geometry(doc))
     edges = {e['id']: (p, e) for p in doc['panels'] for e in p['edges']}
     proposals = {p['id']: p for p in doc['proposals']}
     if len(proposals) != len(doc['proposals']):

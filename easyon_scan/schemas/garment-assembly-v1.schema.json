@@ -396,6 +396,30 @@
         },
         "additionalProperties": false
       }
+    },
+    "pattern_geometry": {
+      "type": "object",
+      "required": [
+        "schema",
+        "units",
+        "panels"
+      ],
+      "properties": {
+        "schema": {
+          "const": "pattern-geometry/v1"
+        },
+        "units": {
+          "const": "mm"
+        },
+        "panels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/geometry_panel"
+          },
+          "minItems": 0
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,
@@ -724,6 +748,250 @@
         },
         "end_mm": {
           "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "geometry_point": {
+      "type": "object",
+      "required": [
+        "id",
+        "xy_mm",
+        "kind",
+        "grading"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^.+$"
+        },
+        "xy_mm": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "kind": {
+          "enum": [
+            "corner",
+            "curve",
+            "unknown"
+          ]
+        },
+        "grading": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "size",
+              "delta_mm"
+            ],
+            "properties": {
+              "size": {
+                "type": "string",
+                "pattern": "^.+$"
+              },
+              "delta_mm": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "geometry_edge": {
+      "type": "object",
+      "required": [
+        "id",
+        "start_point_id",
+        "end_point_id",
+        "source_edge_id",
+        "allowance_mm"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^.+$"
+        },
+        "start_point_id": {
+          "type": "string",
+          "pattern": "^.+$"
+        },
+        "end_point_id": {
+          "type": "string",
+          "pattern": "^.+$"
+        },
+        "source_edge_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "allowance_mm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "geometry_contour": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "point_ids",
+        "edge_ids"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^.+$"
+        },
+        "kind": {
+          "enum": [
+            "outer",
+            "hole"
+          ]
+        },
+        "point_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^.+$"
+          },
+          "minItems": 3
+        },
+        "edge_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^.+$"
+          },
+          "minItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "geometry_notch": {
+      "type": "object",
+      "required": [
+        "id",
+        "edge_id",
+        "at_mm",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^.+$"
+        },
+        "edge_id": {
+          "type": "string",
+          "pattern": "^.+$"
+        },
+        "at_mm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": [
+            "notch",
+            "v_slit",
+            "t",
+            "castle",
+            "check",
+            "u"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "geometry_panel": {
+      "type": "object",
+      "required": [
+        "panel_id",
+        "points",
+        "edges",
+        "contours",
+        "notches",
+        "grain",
+        "fold_edge_ids"
+      ],
+      "properties": {
+        "panel_id": {
+          "type": "string",
+          "pattern": "^.+$"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/geometry_point"
+          },
+          "minItems": 3
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/geometry_edge"
+          },
+          "minItems": 3
+        },
+        "contours": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/geometry_contour"
+          },
+          "minItems": 1
+        },
+        "notches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/geometry_notch"
+          },
+          "minItems": 0
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fold_edge_ids": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^.+$"
+              },
+              "minItems": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
