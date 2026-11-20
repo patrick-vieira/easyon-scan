@@ -992,6 +992,272 @@
               "type": "null"
             }
           ]
+        },
+        "molde_geometria": {
+          "$ref": "#/$defs/molde_geometry"
+        }
+      },
+      "additionalProperties": false
+    },
+    "molde_geometry": {
+      "type": "object",
+      "required": [
+        "perfil",
+        "panel_id",
+        "grade",
+        "pontos",
+        "arestas",
+        "contornos",
+        "piques",
+        "fio",
+        "dobra",
+        "margem",
+        "linhas_internas",
+        "furos",
+        "quantidade",
+        "regras_graduacao",
+        "incrementos",
+        "tamanhos",
+        "dados"
+      ],
+      "properties": {
+        "perfil": {
+          "const": "scan-molde/v1-provisional"
+        },
+        "panel_id": {
+          "type": "string",
+          "pattern": "^.+$"
+        },
+        "grade": {
+          "type": "null"
+        },
+        "pontos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "xy_mm",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^.+$"
+              },
+              "xy_mm": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "kind": {
+                "enum": [
+                  "corner",
+                  "curve",
+                  "unknown"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 3
+        },
+        "arestas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "start_point_id",
+              "end_point_id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^.+$"
+              },
+              "start_point_id": {
+                "type": "string",
+                "pattern": "^.+$"
+              },
+              "end_point_id": {
+                "type": "string",
+                "pattern": "^.+$"
+              }
+            },
+            "additionalProperties": false
+          },
+          "minItems": 3
+        },
+        "contornos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/geometry_contour"
+          },
+          "minItems": 1
+        },
+        "piques": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/geometry_notch"
+          },
+          "minItems": 0
+        },
+        "fio": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dobra": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^.+$"
+              },
+              "minItems": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "margem": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "edge_id",
+              "allowance_mm"
+            ],
+            "properties": {
+              "edge_id": {
+                "type": "string"
+              },
+              "allowance_mm": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "linhas_internas": {
+          "type": "null"
+        },
+        "furos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "quantidade": {
+          "type": "null"
+        },
+        "regras_graduacao": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "point_id",
+              "grading"
+            ],
+            "properties": {
+              "point_id": {
+                "type": "string"
+              },
+              "grading": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "size",
+                    "delta_mm"
+                  ],
+                  "properties": {
+                    "size": {
+                      "type": "string",
+                      "pattern": "^.+$"
+                    },
+                    "delta_mm": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "minItems": 0
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "incrementos": {
+          "type": "null"
+        },
+        "tamanhos": {
+          "type": "null"
+        },
+        "dados": {
+          "type": "object",
+          "required": [
+            "scan"
+          ],
+          "properties": {
+            "scan": {
+              "type": "object",
+              "required": [
+                "source_edges"
+              ],
+              "properties": {
+                "source_edges": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "edge_id",
+                      "source_edge_id"
+                    ],
+                    "properties": {
+                      "edge_id": {
+                        "type": "string"
+                      },
+                      "source_edge_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

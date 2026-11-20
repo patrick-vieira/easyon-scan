@@ -75,12 +75,9 @@ def _length(doc, ref):
     return (ref['end_mm'] - ref['start_mm']) / edge['length_mm'] * (interval[1] - interval[0])
 
 
-def validate_assembly_v1(doc, *, length_tolerance_mm):
-    """Validate v1 structure and supported plain/gather construction semantics."""
+def _structure_issues(value, spec, schema, path='$'):
+    """Check the supported JSON Schema vocabulary for public contract adapters."""
     issues = []
-    if not isinstance(length_tolerance_mm, (int, float)) or not math.isfinite(length_tolerance_mm) or length_tolerance_mm < 0:
-        raise ValueError('Declare a finite nonnegative length_tolerance_mm')
-    schema = json.loads(files('easyon_scan').joinpath('schemas/garment-assembly-v1.schema.json').read_text())
     def structure(value, spec, path='$'):
         if '$ref' in spec:
             spec = schema['$defs'][spec['$ref'].split('/')[-1]]
@@ -126,7 +123,17 @@ def validate_assembly_v1(doc, *, length_tolerance_mm):
         elif type(value) in (int, float):
             if not spec.get('minimum', -math.inf) <= value <= spec.get('maximum', math.inf):
                 issues.append(_issue('structure', f'{path}: invalid range'))
-    structure(doc, schema)
+    structure(value, spec, path)
+    return issues
+
+
+def validate_assembly_v1(doc, *, length_tolerance_mm):
+    """Validate v1 structure and supported plain/gather construction semantics."""
+    issues = []
+    if not isinstance(length_tolerance_mm, (int, float)) or not math.isfinite(length_tolerance_mm) or length_tolerance_mm < 0:
+        raise ValueError('Declare a finite nonnegative length_tolerance_mm')
+    schema = json.loads(files('easyon_scan').joinpath('schemas/garment-assembly-v1.schema.json').read_text())
+    issues.extend(_structure_issues(doc, schema, schema))
     if issues:
         return issues
     base = copy.deepcopy(doc)
@@ -233,7 +240,7 @@ def validate_assembly_v1(doc, *, length_tolerance_mm):
                         issues.append(_issue('decision_edit', 'after must be a complete pair snapshot'))
                     else:
                         for field in fields:
-                            structure(after[field], schema['properties']['proposals']['items']['properties'][field], '$.review.after.' + field)
+                            issues.extend(_structure_issues(after[field], schema['properties']['proposals']['items']['properties'][field], schema, '$.review.after.' + field))
                         expected = after
                 accepted[target] = expected
         else:
