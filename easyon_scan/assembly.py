@@ -86,10 +86,8 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
     Curves flatten at 0.1 mm chord tolerance; turns >=30 degrees split edges.
     Offsets are hypotheses only and are rejected if empty or disconnected.
     """
-    from .dxf_adapter import read_dxf_geometry, MAX_BYTES
-    if not isinstance(path_or_bytes, bytes) and Path(path_or_bytes).stat().st_size > MAX_BYTES:
-        raise ValueError('DXF exceeds 10 MiB limit')
-    raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
+    from .dxf_adapter import read_dxf_geometry, bounded_dxf_bytes
+    raw = bounded_dxf_bytes(path_or_bytes)
     # Apply the same bounded expansion and geometry checks as inspection.
     if not _validated:
         try:
@@ -145,7 +143,7 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
             amplification = 1.
             if matrix is not None:
                 amplification = math.sqrt(sum(matrix.transform_direction(v).magnitude_square
-                                              for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1))))
+                                              for v in ((1, 0, 0), (0, 1, 0))))
             points = _points(entity, factor, MAX_VERTICES - vertex_count, amplification)
             vertex_count += len(points)
             if matrix is not None:

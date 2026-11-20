@@ -285,11 +285,11 @@ def test_legacy_insert_flattening_obeys_vertex_budget(monkeypatch):
     block = doc.blocks.new('CURVE')
     block.add_circle((0, 0), 10)
     doc.modelspace().add_blockref('CURVE', (0, 0), dxfattribs={
-        'xscale': 0.001, 'yscale': 0.001,
+        'xscale': 100, 'yscale': 100,
     })
-    monkeypatch.setattr(dxf_adapter, 'MAX_VERTICES', 20)
+    monkeypatch.setattr(dxf_adapter, 'MAX_VERTICES', 200)
     with pytest.raises(ValueError, match='vertex limit'):
-        dxf_to_assembly(raw(doc))
+        dxf_to_assembly(raw(doc), _validated=True)
 
 
 def test_paperspace_entities_count_toward_source_limit(monkeypatch):
@@ -300,3 +300,36 @@ def test_paperspace_entities_count_toward_source_limit(monkeypatch):
     monkeypatch.setattr(dxf_adapter, 'MAX_ENTITIES', 0)
     with pytest.raises(ValueError, match='entity limit'):
         read_dxf_geometry(raw(doc))
+
+
+def test_orphan_paperspace_block_counts_toward_source_limit(monkeypatch):
+    from easyon_scan import dxf_adapter
+    doc = ezdxf.new()
+    doc.units = 4
+    doc.blocks.new('*Paper_Space77').add_line((0, 0), (1, 1))
+    monkeypatch.setattr(dxf_adapter, 'MAX_ENTITIES', 0)
+    with pytest.raises(ValueError, match='entity limit'):
+        read_dxf_geometry(raw(doc))
+
+
+def test_bounded_path_read_rejects_oversize_without_read_bytes(tmp_path, monkeypatch):
+    from easyon_scan import dxf_adapter
+    path = tmp_path / 'growing.dxf'
+    path.write_bytes(b'12345')
+    monkeypatch.setattr(dxf_adapter, 'MAX_BYTES', 4)
+    with pytest.raises(ValueError, match='10 MiB limit'):
+        read_dxf_geometry(path)
+
+
+def test_flat_insert_ignores_zscale_for_curve_budget(monkeypatch):
+    from easyon_scan import dxf_adapter
+    from easyon_scan.assembly import dxf_to_assembly
+    doc = ezdxf.new()
+    doc.units = 4
+    doc.blocks.new('FLAT').add_circle((0, 0), 10)
+    doc.modelspace().add_blockref('FLAT', (0, 0), dxfattribs={
+        'xscale': 1, 'yscale': 1, 'zscale': 1_000_000,
+    })
+    monkeypatch.setattr(dxf_adapter, 'MAX_VERTICES', 200)
+    assert len(read_dxf_geometry(raw(doc))['entities']) == 1
+    dxf_to_assembly(raw(doc), _validated=True)

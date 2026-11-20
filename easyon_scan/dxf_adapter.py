@@ -25,6 +25,18 @@ MAX_VERTICES = 500_000
 SUPPORTED = {"LINE", "POINT", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE", "ELLIPSE", "SPLINE"}
 
 
+def bounded_dxf_bytes(path_or_bytes):
+    """Read at most one byte beyond the DXF limit, including for growing files."""
+    if isinstance(path_or_bytes, bytes):
+        raw = path_or_bytes
+    else:
+        with Path(path_or_bytes).open("rb") as source:
+            raw = source.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        raise ValueError("DXF exceeds 10 MiB limit")
+    return raw
+
+
 def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
                       _raw_doc=None, _validate_closed=True):
     """Return metric geometry and inventory; refuse ambiguous/contradictory units.
@@ -35,18 +47,13 @@ def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
     """
     if not math.isfinite(tolerance_mm) or tolerance_mm <= 0:
         raise ValueError("tolerance_mm must be finite and positive")
-    if not isinstance(path_or_bytes, bytes) and Path(path_or_bytes).stat().st_size > MAX_BYTES:
-        raise ValueError("DXF exceeds 10 MiB limit")
-    raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
-    if len(raw) > MAX_BYTES:
-        raise ValueError("DXF exceeds 10 MiB limit")
+    raw = bounded_dxf_bytes(path_or_bytes)
     try:
         doc = _raw_doc or ezdxf.decode_base64(base64.b64encode(raw))
-        # Layout block records include modelspace and paper spaces; count each once.
-        source_count = sum(1 for layout in doc.layouts for _ in layout)
+        # Every entity belongs to one block record, including orphan layouts.
+        source_count = 0
         for block in doc.blocks:
-            if not block.block_record.is_any_layout:
-                source_count += sum(1 for _ in block)
+            source_count += sum(1 for _ in block)
             if source_count > MAX_ENTITIES:
                 break
     except Exception as exc:
@@ -120,7 +127,7 @@ def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
             amplification = 1.
             for matrix in matrices:
                 amplification *= math.sqrt(sum(matrix.transform_direction(v).magnitude_square
-                                               for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1))))
+                                               for v in ((1, 0, 0), (0, 1, 0))))
             if kind == "POINT":
                 vertices = [entity.dxf.location]
                 closed = False
@@ -221,11 +228,7 @@ def dxf_to_pattern_geometry(path_or_bytes, *, assume_units=None, length_toleranc
     from .assembly import dxf_to_assembly
     from .assembly_v1 import migrate_v0
     from .assembly_geometry import add_pattern_geometry
-    if not isinstance(path_or_bytes, bytes) and Path(path_or_bytes).stat().st_size > MAX_BYTES:
-        raise ValueError("DXF exceeds 10 MiB limit")
-    raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
-    if len(raw) > MAX_BYTES:
-        raise ValueError("DXF exceeds 10 MiB limit")
+    raw = bounded_dxf_bytes(path_or_bytes)
     try:
         source = ezdxf.decode_base64(base64.b64encode(raw))
     except Exception as exc:
