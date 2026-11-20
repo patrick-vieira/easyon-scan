@@ -109,10 +109,14 @@ def _structure_issues(value, spec, schema, path='$'):
             for key in spec.get('required', []):
                 if key not in value:
                     issues.append(_issue('structure', f'{path}: missing {key}'))
-            if spec.get('additionalProperties') is False:
-                for key in value.keys() - spec.get('properties', {}).keys():
+            properties = spec.get('properties', {})
+            additional = spec.get('additionalProperties')
+            for key in value.keys() - properties.keys():
+                if additional is False:
                     issues.append(_issue('structure', f'{path}: unexpected {key}'))
-            for key, child in spec.get('properties', {}).items():
+                elif isinstance(additional, dict):
+                    structure(value[key], additional, path + '.' + key)
+            for key, child in properties.items():
                 if key in value:
                     structure(value[key], child, path + '.' + key)
         elif isinstance(value, list):

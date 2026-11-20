@@ -135,6 +135,7 @@ def test_converter_preserves_notches_at_source_edge_boundaries(edge_index, at_mm
 
 
 def test_multisegment_edge_notches_at_internal_and_final_boundaries():
+    from easyon_scan.assembly_geometry import add_molde_geometry
     dxf = ezdxf.new()
     dxf.header['$INSUNITS'] = 4
     dxf.modelspace().add_lwpolyline([(0, 0), (40, 0), (100, 0), (100, 100), (0, 100)], close=True)
@@ -149,6 +150,10 @@ def test_multisegment_edge_notches_at_internal_and_final_boundaries():
     assert [(n['at_mm'], n['kind']) for n in panel['notches']] == [(0., 'notch'), (60., 'u')]
     assert len({n['id'] for n in panel['notches']}) == 2
     assert not errors(converted)
+    ak = add_molde_geometry(converted)['pattern_geometry']['panels'][0]['molde_geometria']['dados']
+    assert ak['arestas'][0]['curva'] == {'pontos': [[40., 0.]]}
+    assert ak['arestas'][0]['id'] == edge['id']
+    assert [notch['posicao_mm'] for notch in ak['piques']] == [40., 100.]
 
 
 def test_converter_forwards_declared_seam_tolerance(tmp_path):
@@ -271,7 +276,7 @@ def test_provisional_molde_profile_roundtrip_and_purity():
     panel['edges'][0]['allowance_mm'] = 4.5
     panel['grain'] = [0., 1.]
     snapshot = copy.deepcopy(base)
-    result = add_molde_geometry(base)
+    result = add_molde_geometry(base, profile="provisional")
     assert base == snapshot
     assert not errors(result)
     assert remove_molde_geometry(result) == base
@@ -311,7 +316,7 @@ def test_molde_extension_keeps_geometry_error_ids(mutation, code):
 
 def test_molde_profile_crossing_and_divergence_are_rejected():
     from easyon_scan.assembly_geometry import add_molde_geometry, from_molde_geometria
-    doc = add_molde_geometry(source())
+    doc = add_molde_geometry(source(), profile="provisional")
     panel = doc['pattern_geometry']['panels'][0]
     panel['points'][1]['xy_mm'], panel['points'][2]['xy_mm'] = (
         panel['points'][2]['xy_mm'], panel['points'][1]['xy_mm'])
@@ -337,12 +342,13 @@ def test_molde_profile_generated_review_fixture_preserves_common_v1(tmp_path):
     assert not errors(converted)
     assert remove_pattern_geometry(converted) == base == snapshot
     assert len(converted['pattern_geometry']['panels']) == len(base['panels'])
-    from easyon_scan.assembly_geometry import to_molde_geometria, from_molde_geometria
+    originals = {p['id']: p for p in base['panels']}
     for panel in converted['pattern_geometry']['panels']:
-        expected = copy.deepcopy(panel)
-        profile = expected.pop('molde_geometria')
-        assert from_molde_geometria(profile) == expected
-        assert to_molde_geometria(from_molde_geometria(profile)) == profile
+        dados = panel['molde_geometria']['dados']
+        original = originals[panel['panel_id']]
+        assert dados['scan']['proveniencia'] == original['provenance']
+        assert list(dados['scan']['proveniencia_arestas']) == [e['id'] for e in original['edges']]
+        assert dados['grade'] == {'ordem': ['M'], 'base': 'M'}
 
 
 @pytest.mark.parametrize('mutation', [
@@ -387,3 +393,123 @@ def test_inverse_molde_does_not_alias_input_or_reconstructed_fields():
     rebuilt['contours'][0]['point_ids'].append('another')
     assert profile == snapshot
     assert panel['points'][0]['grading'][0]['delta_mm'] == [2, -3]
+
+
+def test_ak_projection_maps_common_fields_and_keeps_scan_extensions():
+    from easyon_scan.assembly_geometry import add_molde_geometry, remove_molde_geometry
+    base = source(hole=True)
+    base['source']['size'] = 'G'
+    panel = base['panels'][0]
+    panel.update(grain=[0., 1.], on_fold=True, quantity='2',
+                 sewline=[[10, 10], [90, 10], [90, 90], [10, 90], [10, 10]],
+                 sewline_status='from_dxf')
+    panel['edges'][0].update(semantic_label='costura', sewline_interval_mm=[0, 80],
+                             notches=[dict(at_mm=0, kind='castle'), dict(at_mm=10, kind='check')])
+    base = add_pattern_geometry(base)
+    ext_panel = base['pattern_geometry']['panels'][0]
+    ext_panel['edges'][0]['allowance_mm'] = 10
+    ext_panel['points'][0]['grading'] = [dict(size='GG', delta_mm=[2, 3])]
+    result = add_molde_geometry(base)
+    assert not errors(result)
+    assert remove_molde_geometry(result) == base
+    profile = result['pattern_geometry']['panels'][0]['molde_geometria']
+    dados = profile['dados']
+    assert profile == dict(unidade='mm', origem='scan', margem_conhecida=False, dados=dados)
+    assert dados['grade'] == {'ordem': ['G'], 'base': 'G'}
+    assert dados['pontos'][0] == dict(id='P1', x=0, y=0, tipo='pique')
+    eid = panel['edges'][0]['id']
+    assert dados['arestas'][0] == dict(id=eid, de='P1', para='P2', curva=None,
+                                      tipo='costura', nome='costura', par=None)
+    assert dados['piques'] == [dict(aresta=eid, posicao_mm=0, tipo='T', tipo_origem='castle'),
+                              dict(aresta=eid, posicao_mm=10, tipo='V', tipo_origem='check')]
+    assert dados['fio'] == dict(de=[50, 0], para=[50, 100])
+    assert dados['dobra'] == dict(aresta=None)
+    assert dados['margem'] == dict(padrao_mm=None, por_aresta={})
+    assert dados['furos'] == [panel['holes'][0][:-1]]
+    assert dados['quantidade'] == dict(par=False, espelhar=False, texto='2')
+    assert dados['regras_graduacao'] == dados['incrementos'] == dados['tamanhos'] == {}
+    assert dados['linha_costura'] == dict(pontos=panel['sewline'][:-1], estado='from_dxf')
+    assert dados['scan']['fonte'] == base['source']
+    assert dados['scan']['intervalos_costura_mm'][eid] == [0, 80]
+    malformed = copy.deepcopy(result)
+    scan = malformed['pattern_geometry']['panels'][0]['molde_geometria']['dados']['scan']
+    scan['intervalos_costura_mm'][eid][0] = False
+    assert 'structure' in {i['code'] for i in errors(malformed)}
+    dados['scan']['fonte']['size'] = 'P'
+    assert base['source']['size'] == 'G'
+    assert 'geometry_molde_projection' in {i['code'] for i in errors(result)}
+
+
+def test_ak_projection_rejects_invalid_ak_notch_without_changing_legacy():
+    from easyon_scan.assembly_geometry import add_molde_geometry
+    base = source()
+    edge = base['panels'][0]['edges'][0]
+    edge['to_mm'] += 2e-4
+    edge['length_mm'] += 2e-4
+    edge['notches'] = [dict(at_mm=edge['length_mm'], kind='t')]
+    assert not errors(base)
+    assert not errors(add_molde_geometry(base, profile='provisional'))
+    with pytest.raises(ValueError, match=f"Notch exceeds AK edge {edge['id']}"):
+        add_molde_geometry(base)
+
+
+def test_ak_projection_reports_unknown_panel_reference_by_id():
+    from easyon_scan.assembly_geometry import add_molde_geometry
+    result = add_molde_geometry(source())
+    result['pattern_geometry']['panels'][0]['panel_id'] = 'missing-panel'
+    issues = errors(result)
+    assert any(i['code'] == 'geometry_panel_reference' and
+               i['panel'] == i['entity_id'] == 'missing-panel' for i in issues)
+    assert not any(i['code'] == 'geometry_molde_projection' for i in issues)
+
+
+def test_ak_projection_rejects_unknown_source_notch_kind_at_validation():
+    from easyon_scan.assembly_geometry import add_molde_geometry
+    base = source()
+    base['panels'][0]['edges'][0]['notches'] = [dict(at_mm=0, kind='invented')]
+    assert any(i['code'] == 'structure' and '.notches[0].kind' in i['message'] for i in errors(base))
+    with pytest.raises(ValueError, match='Invalid garment-assembly/v1'):
+        add_molde_geometry(base)
+
+
+def test_ak_projection_normalizes_nonunit_grain_and_empty_size():
+    from easyon_scan.assembly_geometry import add_molde_geometry
+    base = source()
+    base['panels'][0]['grain'] = [0, 2]
+    base['source']['size'] = ''
+    result = add_molde_geometry(base)
+    assert not errors(result)
+    assert result['panels'][0]['grain'] == [0, 2]
+    dados = result['pattern_geometry']['panels'][0]['molde_geometria']['dados']
+    assert dados['fio'] == dict(de=[50, 0], para=[50, 100])
+    assert dados['grade'] == dict(ordem=[], base=None)
+    assert dados['scan']['fonte']['size'] == ''
+    result['panels'][0]['grain'] = [0, 0]
+    assert 'grain_zero' in {i['code'] for i in errors(result)}
+
+
+def test_ak_projection_keeps_closing_notch_on_last_edge():
+    from easyon_scan.assembly_geometry import add_molde_geometry
+    base = source()
+    edge = base['panels'][0]['edges'][-1]
+    edge['notches'] = [dict(at_mm=edge['length_mm'], kind='u')]
+    result = add_molde_geometry(base)
+    dados = result['pattern_geometry']['panels'][0]['molde_geometria']['dados']
+    assert dados['arestas'][-1]['para'] == dados['pontos'][0]['id']
+    assert dados['pontos'][0]['tipo'] == 'canto'
+    assert dados['piques'] == [
+        dict(aresta=edge['id'], posicao_mm=edge['length_mm'], tipo='U', tipo_origem='u'),
+    ]
+
+
+def test_ak_projection_uses_distinct_point_ids_when_source_edges_collide():
+    from easyon_scan.assembly_geometry import add_molde_geometry
+    base = source()
+    base['panels'][0]['edges'][0]['id'] = 'P1'
+    base['panels'][0]['edges'][1]['id'] = 'P1_'
+    result = add_molde_geometry(base)
+    assert not errors(result)
+    dados = result['pattern_geometry']['panels'][0]['molde_geometria']['dados']
+    assert [p['id'] for p in dados['pontos']] == ['P1__', 'P2', 'P3', 'P4']
+    assert dados['arestas'][0]['id'] == 'P1'
+    assert dados['arestas'][0]['de'] == dados['arestas'][-1]['para'] == 'P1__'
