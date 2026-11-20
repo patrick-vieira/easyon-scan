@@ -697,12 +697,15 @@ report)`. Generic geometry that cannot be represented in assembly remains in
 the inventory and loss report. Block structure and text semantics are lost.
 
 The inspection path rejects files over 10 MiB, more than 100,000 source
-entities, 200,000 expanded entities, or 500,000 flattened vertices, as well as
+entities (including paper space), 200,000 expanded entities, or 500,000 flattened vertices, as well as
 invalid DXF, nonplanar or nonfinite coordinates, invalid closed contours, and
 ambiguous units. These are resource and input checks, not a claim of CAD
 compatibility or physical measurement accuracy. `dxf_to_assembly` remains the
-legacy v0 API; it uses the same byte, entity, expansion and vertex limits before
-converting, while retaining its contour validation behavior. The v1 projection
+legacy v0 API; it enforces the same byte, entity, expansion and vertex limits
+both before and during conversion. Its curves flatten at 0.1 mm in final
+coordinates even inside scaled INSERTs, which can change legacy outlines and
+reject files that previously expanded without a vertex bound. It retains its
+contour validation behavior. The v1 projection
 also rejects invalid closed contours. Export via
 `pattern_geometry_dxf_bytes` is geometry only and returns an explicit loss
 report. Synthetic round trips do not establish AAMA/ASTM interoperability.

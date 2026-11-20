@@ -275,3 +275,28 @@ def test_last_saved_by_is_not_exposed_as_exporter():
     report = read_dxf_geometry(raw(doc))['report']
     assert report['exporter'] is None
     assert 'a private user name' not in str(report)
+
+
+def test_legacy_insert_flattening_obeys_vertex_budget(monkeypatch):
+    from easyon_scan import dxf_adapter
+    from easyon_scan.assembly import dxf_to_assembly
+    doc = ezdxf.new()
+    doc.units = 4
+    block = doc.blocks.new('CURVE')
+    block.add_circle((0, 0), 10)
+    doc.modelspace().add_blockref('CURVE', (0, 0), dxfattribs={
+        'xscale': 0.001, 'yscale': 0.001,
+    })
+    monkeypatch.setattr(dxf_adapter, 'MAX_VERTICES', 20)
+    with pytest.raises(ValueError, match='vertex limit'):
+        dxf_to_assembly(raw(doc))
+
+
+def test_paperspace_entities_count_toward_source_limit(monkeypatch):
+    from easyon_scan import dxf_adapter
+    doc = ezdxf.new()
+    doc.units = 4
+    doc.layouts.get('Layout1').add_line((0, 0), (1, 1))
+    monkeypatch.setattr(dxf_adapter, 'MAX_ENTITIES', 0)
+    with pytest.raises(ValueError, match='entity limit'):
+        read_dxf_geometry(raw(doc))

@@ -35,13 +35,15 @@ def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
     """
     if not math.isfinite(tolerance_mm) or tolerance_mm <= 0:
         raise ValueError("tolerance_mm must be finite and positive")
+    if not isinstance(path_or_bytes, bytes) and Path(path_or_bytes).stat().st_size > MAX_BYTES:
+        raise ValueError("DXF exceeds 10 MiB limit")
     raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
     if len(raw) > MAX_BYTES:
         raise ValueError("DXF exceeds 10 MiB limit")
     try:
         doc = _raw_doc or ezdxf.decode_base64(base64.b64encode(raw))
-        # Layout block records include modelspace; count it only once.
-        source_count = sum(1 for _ in doc.modelspace())
+        # Layout block records include modelspace and paper spaces; count each once.
+        source_count = sum(1 for layout in doc.layouts for _ in layout)
         for block in doc.blocks:
             if not block.block_record.is_any_layout:
                 source_count += sum(1 for _ in block)
@@ -219,6 +221,8 @@ def dxf_to_pattern_geometry(path_or_bytes, *, assume_units=None, length_toleranc
     from .assembly import dxf_to_assembly
     from .assembly_v1 import migrate_v0
     from .assembly_geometry import add_pattern_geometry
+    if not isinstance(path_or_bytes, bytes) and Path(path_or_bytes).stat().st_size > MAX_BYTES:
+        raise ValueError("DXF exceeds 10 MiB limit")
     raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
     if len(raw) > MAX_BYTES:
         raise ValueError("DXF exceeds 10 MiB limit")
@@ -245,7 +249,8 @@ def dxf_to_pattern_geometry(path_or_bytes, *, assume_units=None, length_toleranc
                         raise ValueError('Conflicting metadata in DXF scope')
                     labels[key] = value
     check(source.modelspace())
-    assembly = dxf_to_assembly(raw, assume_units=assume_units, _raw_doc=source)
+    assembly = dxf_to_assembly(raw, assume_units=assume_units, _raw_doc=source,
+                               _validated=True)
     result = add_pattern_geometry(migrate_v0(assembly), length_tolerance_mm=length_tolerance_mm)
     report = geometry['report']
     report['source'].update(result['source'])

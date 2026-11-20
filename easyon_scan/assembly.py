@@ -4,6 +4,7 @@ import base64
 import math
 import re
 from pathlib import Path
+from itertools import islice
 
 import ezdxf
 from ezdxf import path as dxfpath
@@ -20,12 +21,15 @@ def _provenance(entity):
                 dxftype=entity.dxftype())
 
 
-def _points(entity, factor):
+def _points(entity, factor, remaining, amplification=1.):
     kind = entity.dxftype()
     if kind == 'POINT':
         vertices = [entity.dxf.location]
     else:
-        vertices = dxfpath.make_path(entity).flattening(FLATTEN_MM / factor)
+        vertices = dxfpath.make_path(entity).flattening(FLATTEN_MM / (factor * max(amplification, 1e-12)))
+    vertices = list(islice(vertices, remaining + 1))
+    if len(vertices) > remaining:
+        raise ValueError('DXF vertex limit exceeded')
     return [[float(v.x * factor), float(v.y * factor)] for v in vertices]
 
 
@@ -76,22 +80,25 @@ def _edges(ring, marks, panel_id, provenance):
 
 
 def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowance_mm=None,
-                    _raw_doc=None):
+                    _raw_doc=None, _validated=False):
     """Read a DXF path or bytes; unitless inputs require explicit units.
 
     Curves flatten at 0.1 mm chord tolerance; turns >=30 degrees split edges.
     Offsets are hypotheses only and are rejected if empty or disconnected.
     """
+    from .dxf_adapter import read_dxf_geometry, MAX_BYTES
+    if not isinstance(path_or_bytes, bytes) and Path(path_or_bytes).stat().st_size > MAX_BYTES:
+        raise ValueError('DXF exceeds 10 MiB limit')
     raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
-    from .dxf_adapter import read_dxf_geometry
     # Apply the same bounded expansion and geometry checks as inspection.
-    try:
-        read_dxf_geometry(raw, assume_units=assume_units, _raw_doc=_raw_doc,
-                          _validate_closed=False)
-    except ValueError as exc:
-        if str(exc).startswith("Ambiguous DXF units"):
-            raise ValueError("Unitless DXF ($INSUNITS=0): specify assume_units (mm, cm or in)") from exc
-        raise
+    if not _validated:
+        try:
+            read_dxf_geometry(raw, assume_units=assume_units, _raw_doc=_raw_doc,
+                              _validate_closed=False)
+        except ValueError as exc:
+            if str(exc).startswith("Ambiguous DXF units"):
+                raise ValueError("Unitless DXF ($INSUNITS=0): specify assume_units (mm, cm or in)") from exc
+            raise
     try:
         doc = _raw_doc or ezdxf.decode_base64(base64.b64encode(raw))
     except Exception as exc:
@@ -110,10 +117,12 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
     if seam_allowance_mm is not None and (not math.isfinite(seam_allowance_mm) or seam_allowance_mm <= 0):
         raise ValueError('seam_allowance_mm must be finite and positive')
     records, annotations, labels = [], [], {}
+    vertex_count = 0
     notch_layers = {'NOTCH': 'notch', '4': 'v_slit', '80': 't',
                     '81': 'castle', '82': 'check', '83': 'u'}
 
     def collect(space, scope='model', matrix=None):
+        nonlocal vertex_count
         for entity in space:
             kind = entity.dxftype()
             if kind == 'INSERT':
@@ -132,7 +141,13 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
                 continue
             if kind not in ('LWPOLYLINE', 'POLYLINE', 'SPLINE', 'ARC', 'CIRCLE', 'LINE', 'POINT'):
                 continue
-            points = _points(entity, factor)
+            from .dxf_adapter import MAX_VERTICES
+            amplification = 1.
+            if matrix is not None:
+                amplification = math.sqrt(sum(matrix.transform_direction(v).magnitude_square
+                                              for v in ((1, 0, 0), (0, 1, 0), (0, 0, 1))))
+            points = _points(entity, factor, MAX_VERTICES - vertex_count, amplification)
+            vertex_count += len(points)
             if matrix is not None:
                 # Block transformation is in source units, before metric scaling.
                 points = [[v.x*factor, v.y*factor] for v in
