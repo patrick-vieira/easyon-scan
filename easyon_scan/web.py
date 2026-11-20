@@ -59,7 +59,7 @@ STRINGS = {'pt': {'lang': 'pt-BR',
         'verify': 'Confira as medidas com uma régua antes de cortar. A precisão em fotos reais '
                   'ainda não foi validada.',
         'how': 'Como funciona',
-        'video_fallback': 'Baixar vídeo explicativo',
+        'video_fallback': 'Ver vídeo explicativo',
         'pt_captions': 'Português (Brasil)',
         'en_captions': 'Inglês',
         'back': 'Voltar ao envio de foto',
@@ -154,7 +154,7 @@ STRINGS = {'pt': {'lang': 'pt-BR',
         'verify': 'Check dimensions with a ruler before cutting. Real-photo accuracy has not yet '
                   'been validated.',
         'how': 'How it works',
-        'video_fallback': 'Download explainer video',
+        'video_fallback': 'Watch explainer video',
         'pt_captions': 'Portuguese (Brazil)',
         'en_captions': 'English',
         'back': 'Back to photo upload',
@@ -296,10 +296,10 @@ def create_app(layout="free"):
 
     @app.get("/media/<name>")
     def media(name):
-        if name not in {"easyon-scan.mp4", "easyon-scan-poster.jpg", "easyon-scan.pt.vtt", "easyon-scan.en.vtt"}:
+        if name not in {"easyon-scan-poster.jpg", "easyon-scan.pt.vtt", "easyon-scan.en.vtt"}:
             from flask import abort
             abort(404)
-        return send_from_directory(Path(__file__).resolve().parent.parent / "docs", name)
+        return send_from_directory(Path(__file__).resolve().parent / "media", name)
 
     @app.get("/capture")
     def capture():

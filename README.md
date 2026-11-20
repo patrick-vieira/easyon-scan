@@ -1,5 +1,42 @@
 # easyon-scan
 
+## Python library (0.2.0)
+
+Install the core with `pip install easyon-scan`; the local web interface uses
+`pip install 'easyon-scan[web]'`. The core requires
+`opencv-contrib-python-headless==4.11.0.86` and `ezdxf==1.4.3`; do not also
+install a second OpenCV wheel in the same environment. The command line
+measurement and sheet tools work with the core; `easyon-scan web` needs the
+web extra.
+
+```python
+from easyon_scan import measure_image, measurement_to_dxf_bytes
+
+result = measure_image(photo_bytes, layout="fixed")  # A3 kit, ArUco IDs 0–3
+for piece in result.pieces:
+    print(piece.contour_mm, piece.holes_mm, piece.notches_mm,
+          piece.grain_lines_mm)
+print(result.summary(), result.quality_checks)
+dxf = measurement_to_dxf_bytes(result)  # bytes, millimetres, all pieces
+```
+
+`measure_image` also accepts an OpenCV BGR `numpy.ndarray`. Encoded bytes are
+decoded with EXIF orientation. Free marker layout is the default; pass
+`marker_size={0: 90, 1: 60}` for custom black-square sizes in mm, or
+`layout_file=path` for a saved metric layout. The fixed A3 kit retains IDs 0–3
+and 90 mm squares. `profile=path`, `reference="a4"`, and
+`reference_frontal=True` follow the existing `measure` rules. It returns the
+existing `Measurement` object; errors raise `ScanError` or `ValueError`.
+`measurement_to_dxf_bytes` accepts `mode="plain"` or experimental `"aama"`,
+plus `size` and `piece_names`. The existing `scan.measure` and `dxf.dxf_bytes`
+APIs remain available. No files are written by these in-memory calls.
+
+The DXF representation and measurement checks are experimental. Synthetic
+results in [benchmark](docs/benchmark.md) do not establish physical accuracy;
+real-photo precision remains unvalidated as described in
+[precision notes](docs/precision-notes.md). CAD system compatibility is also
+unvalidated.
+
 Turn a phone photograph of flat paper sewing pieces into closed DXF outlines
 in millimetres. Python 3.11+, Apache-2.0. Early experimental release.
 
@@ -487,11 +524,12 @@ Camera profile JSON, AAMA mode and size are under **Opções avançadas / Advanc
 options**. Catalogue dimensions are nominal; no numerical real-photo accuracy
 is promised. BIC requires explicit frontal-photo confirmation.
 
-The **Como funciona / How it works** video uses the local MP4, poster and PT/EN
-caption files from `docs/`, served through an allowlisted `/media/<name>` route.
-No external fonts, scripts or styles are required. Templates and styles are
-packaged with the Python module; keep the repository's `docs/` directory beside
-the package when running this local video-enabled UI.
+The **Como funciona / How it works** section provides local photo instructions
+and a link to the narrated demonstration in the repository. The wheel excludes
+the MP4 video; opening that optional link requires an internet connection.
+No external fonts, scripts or styles are required. Templates, styles, the poster
+and captions are packaged with the Python module; local media files are served
+through an allowlisted `/media/<name>` route.
 
 ### SCAN-17b: experimental multi-object plane measurements
 
