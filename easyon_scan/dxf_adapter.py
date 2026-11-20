@@ -124,10 +124,16 @@ def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
                 loss(kind, "polyline width omitted; centerline retained", layer)
             # Convert vertices before block transforms; account for magnification
             # so curve flattening tolerance is in final millimetres.
-            amplification = 1.
-            for matrix in matrices:
-                amplification *= math.sqrt(sum(matrix.transform_direction(v).magnitude_square
-                                               for v in ((1, 0, 0), (0, 1, 0))))
+            # Compose the linear transforms before projecting to XY. An inclined
+            # block can turn its scaled Z axis into an output XY direction.
+            axes = []
+            for axis in ((1, 0, 0), (0, 1, 0), (0, 0, 1)):
+                from ezdxf.math import Vec3
+                direction = Vec3(axis)
+                for matrix in matrices:
+                    direction = matrix.transform_direction(direction)
+                axes.append(direction)
+            amplification = math.sqrt(sum(v.x * v.x + v.y * v.y for v in axes))
             if kind == "POINT":
                 vertices = [entity.dxf.location]
                 closed = False

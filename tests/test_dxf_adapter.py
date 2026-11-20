@@ -333,3 +333,27 @@ def test_flat_insert_ignores_zscale_for_curve_budget(monkeypatch):
     monkeypatch.setattr(dxf_adapter, 'MAX_VERTICES', 200)
     assert len(read_dxf_geometry(raw(doc))['entities']) == 1
     dxf_to_assembly(raw(doc), _validated=True)
+
+
+def test_inclined_insert_zscale_counts_toward_curve_budget(monkeypatch):
+    from easyon_scan import dxf_adapter
+    from easyon_scan.assembly import dxf_to_assembly
+    doc = ezdxf.new()
+    doc.units = 4
+    doc.blocks.new('INCLINED').add_circle((0, 0), 10,
+                                           dxfattribs={'extrusion': (0, 1, 0)})
+    doc.modelspace().add_blockref('INCLINED', (0, 0), dxfattribs={
+        'extrusion': (0, 1, 0), 'zscale': 100,
+    })
+    source = raw(doc)
+    monkeypatch.setattr(dxf_adapter, 'MAX_VERTICES', 200)
+    with pytest.raises(ValueError, match='vertex limit'):
+        read_dxf_geometry(source)
+    with pytest.raises(ValueError, match='vertex limit'):
+        dxf_to_assembly(source, _validated=True)
+    monkeypatch.setattr(dxf_adapter, 'MAX_VERTICES', 500_000)
+    points = read_dxf_geometry(source)['entities'][0]['points_mm']
+    assert Polygon(points).bounds == pytest.approx((-10, -1000, 10, 1000), abs=.1)
+    legacy = dxf_to_assembly(source, _validated=True)
+    assert Polygon(legacy['panels'][0]['cutline']).bounds == pytest.approx(
+        (-10, -1000, 10, 1000), abs=.1)

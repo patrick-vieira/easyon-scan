@@ -30,7 +30,7 @@ def _points(entity, factor, remaining, amplification=1.):
     vertices = list(islice(vertices, remaining + 1))
     if len(vertices) > remaining:
         raise ValueError('DXF vertex limit exceeded')
-    return [[float(v.x * factor), float(v.y * factor)] for v in vertices]
+    return [[float(v.x * factor), float(v.y * factor), float(v.z * factor)] for v in vertices]
 
 
 def _edges(ring, marks, panel_id, provenance):
@@ -142,14 +142,19 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
             from .dxf_adapter import MAX_VERTICES
             amplification = 1.
             if matrix is not None:
-                amplification = math.sqrt(sum(matrix.transform_direction(v).magnitude_square
-                                              for v in ((1, 0, 0), (0, 1, 0))))
+                amplification = math.sqrt(sum(v.x * v.x + v.y * v.y for v in
+                                              (matrix.transform_direction(axis) for axis in
+                                               ((1, 0, 0), (0, 1, 0), (0, 0, 1)))))
             points = _points(entity, factor, MAX_VERTICES - vertex_count, amplification)
             vertex_count += len(points)
             if matrix is not None:
                 # Block transformation is in source units, before metric scaling.
-                points = [[v.x*factor, v.y*factor] for v in
-                          matrix.transform_vertices([(x/factor,y/factor,0) for x,y in points])]
+                points = [[v.x*factor, v.y*factor, v.z*factor] for v in
+                          matrix.transform_vertices([(x/factor,y/factor,z/factor) for x,y,z in points])]
+            if any(not all(math.isfinite(c) for c in point) or abs(point[2]) > 1e-8
+                   for point in points):
+                raise ValueError('Invalid DXF: nonfinite or nonplanar geometry')
+            points = [point[:2] for point in points]
             if not points:
                 continue
             layer = entity.dxf.layer.upper()
