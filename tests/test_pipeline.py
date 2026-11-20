@@ -3,6 +3,7 @@ from io import BytesIO, StringIO
 import re
 import subprocess
 import sys
+from time import perf_counter
 
 import cv2 as cv
 import ezdxf
@@ -117,7 +118,7 @@ def test_free_metric_corners():
     np.testing.assert_allclose(np.linalg.norm(mapped[1]-mapped[0]),90,atol=.001)
 
 
-def test_free_homography_converges_after_five_iterations():
+def test_free_homography_recovers_strong_perspective_geometry():
     from easyon_scan.calibration import free_homography, project, SQUARE
     rng = np.random.default_rng(621)
     world = []
@@ -127,13 +128,33 @@ def test_free_homography_converges_after_five_iterations():
         world.append(SQUARE @ np.array([[c, s], [-s, c]]) + rng.uniform(-700, 700, 2))
     h = np.array([[2., .2, 1000.], [.1, 2., 900.],
                   [rng.uniform(-.0015, .0015), rng.uniform(-.0015, .0015), 1.]])
-    photo = project(np.concatenate(world), h)
-    inverse, recovered, residual_mm = free_homography(photo)
-    assert residual_mm < 1e-5  # The former five-iteration fit leaves 1.93 mm.
     true_world = np.concatenate(world)
+    # Keep the complete scene on the visible side of the projective horizon.
+    h[2, :2] *= min(1., .69 / max(1e-12, 1. - np.min(true_world @ h[2, :2] + 1.)))
+    assert np.min(true_world @ h[2, :2] + 1.) >= .3
+    photo = project(true_world, h)
+    inverse, recovered, residual_mm = free_homography(photo)
+    assert residual_mm < 1e-5
     rotation = np.linalg.lstsq(world[0][1:] - world[0][0], SQUARE[1:], rcond=None)[0]
     np.testing.assert_allclose(recovered, (true_world - world[0][0]) @ rotation, atol=1e-4)
     np.testing.assert_allclose(project(photo, inverse), recovered, atol=1e-4)
+
+
+def test_free_homography_noisy_corners_finish_with_finite_improvement():
+    from easyon_scan.calibration import free_homography, project, SQUARE
+    rng = np.random.default_rng(42)
+    world = np.concatenate([SQUARE + [x, y] for x, y in
+                            [(0, 0), (350, 20), (480, 390), (10, 450), (240, 220), (600, 120)]])
+    h = np.array([[2., .15, 900.], [.1, 1.9, 800.], [.0003, -.0004, 1.]])
+    assert np.min(world @ h[2, :2] + 1.) >= .3
+    photo = project(world, h) + rng.normal(0, .45, world.shape)
+    initial = cv.getPerspectiveTransform(photo[:4].astype(np.float32), SQUARE.astype(np.float32))
+    initial_error = np.sqrt(np.mean(np.sum((project(photo, initial) - world)**2, axis=1)))
+    started = perf_counter()
+    inverse, recovered, residual_mm = free_homography(photo)
+    assert perf_counter() - started < 5
+    assert np.isfinite(inverse).all() and np.isfinite(recovered).all()
+    assert np.isfinite(residual_mm) and residual_mm < initial_error
 
 
 def test_metric_residual_detects_inconsistent_square():
