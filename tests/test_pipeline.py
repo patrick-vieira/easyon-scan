@@ -117,6 +117,21 @@ def test_free_metric_corners():
     np.testing.assert_allclose(np.linalg.norm(mapped[1]-mapped[0]),90,atol=.001)
 
 
+def test_free_homography_converges_after_five_iterations():
+    from easyon_scan.calibration import free_homography, project, SQUARE
+    rng = np.random.default_rng(621)
+    world = []
+    for _ in range(6):
+        angle = rng.uniform(-3, 3)
+        c, s = np.cos(angle), np.sin(angle)
+        world.append(SQUARE @ np.array([[c, s], [-s, c]]) + rng.uniform(-700, 700, 2))
+    h = np.array([[2., .2, 1000.], [.1, 2., 900.],
+                  [rng.uniform(-.0015, .0015), rng.uniform(-.0015, .0015), 1.]])
+    photo = project(np.concatenate(world), h)
+    _, _, residual_mm = free_homography(photo)
+    assert residual_mm < .1  # The former five-iteration fit leaves 1.93 mm.
+
+
 def test_metric_residual_detects_inconsistent_square():
     from easyon_scan.calibration import free_homography, SQUARE
     photo = np.concatenate([SQUARE+[x,y] for x,y in [(0,0),(700,0),(700,900),(0,900)]])
