@@ -12,8 +12,8 @@ def project(points, h):
 def free_homography(photo, sizes=None):
     """Fix the first marker as the coordinate gauge; jointly fit all corners.
 
-    Five damped Gauss–Newton iterations optimize image→plane homography and
-    the other markers' rigid poses. Residuals and damping are in millimetres.
+    Damped Gauss–Newton iterations optimize image→plane homography and the
+    other markers' rigid poses. Residuals and damping are in millimetres.
     """
     groups = photo.reshape(-1, 4, 2)
     from .layout import square
@@ -45,19 +45,30 @@ def free_homography(photo, sizes=None):
         matrix, world = unpack(p)
         return (project(photo, matrix) - world).ravel()
 
-    for _ in range(5):
+    for _ in range(500):
         r = residual(state)
+        old_norm = np.linalg.norm(r)
         steps = 1e-6 * np.maximum(1., np.abs(state))
         steps[6:8] = 1e-9
         jac = np.column_stack([(residual(state + np.eye(1, len(state), i)[0]*step)-r)/step
                                for i, step in enumerate(steps)])
         scale = np.maximum(np.linalg.norm(jac, axis=0), 1e-12)
         j = jac / scale
+        accepted = False
         for damping in (1e-8, 1e-5, .001, .1, 10):
             delta = np.linalg.solve(j.T @ j + damping*np.eye(len(state)), -j.T @ r) / scale
-            if np.linalg.norm(residual(state + delta)) < np.linalg.norm(r):
+            candidate_norm = np.linalg.norm(residual(state + delta))
+            if np.isfinite(candidate_norm) and candidate_norm < old_norm:
+                old_world = unpack(state)[1]
                 state += delta
+                accepted = True
                 break
+        if not accepted:
+            break
+        displacement = np.max(np.linalg.norm(unpack(state)[1] - old_world, axis=1))
+        if (old_norm - candidate_norm < 1e-10 * max(1., old_norm)
+                and displacement < 1e-5):
+            break
     inverse, world = unpack(state)
     residual_mm = float(np.sqrt(np.mean(np.sum((project(photo, inverse)-world)**2, axis=1))))
     return inverse, world, residual_mm
