@@ -66,6 +66,9 @@ def free_homography(photo, sizes=None):
         if not accepted:
             break
         displacement = np.max(np.linalg.norm(unpack(state)[1] - old_world, axis=1))
+        # Bound work once the fitted corner RMS is below the 0.1 mm fit target.
+        if candidate_norm / np.sqrt(len(photo)) < .1:
+            break
         if (old_norm - candidate_norm < 1e-10 * max(1., old_norm)
                 and displacement < 1e-5):
             break
