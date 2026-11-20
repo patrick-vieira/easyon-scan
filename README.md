@@ -682,3 +682,26 @@ and a summary (e.g., "2 errors, 1 warnings"). With `--json`, it prints
 confidence. Missing or hypothetical sewlines leave cutline length as triage only;
 construction remains unknown. The tool rejects uncertain units and invalid
 assemblies, and never treats DXF layout proximity as assembly evidence.
+
+### Experimental DXF inspection API
+
+`easyon_scan.dxf_adapter.read_dxf_geometry(path_or_bytes, assume_units=None,
+ tolerance_mm=0.1)` returns metric `dxf-geometry/v1` entities and a report of
+units and scale, optional declared exporter, layer/entity inventory, expanded
+blocks, flattened curves, explicit losses, and source SHA-256/byte count. The
+bytes are processed in memory; this API does not store the original. Unitless
+DXF needs `assume_units`; a contradictory assumption is rejected. The default
+chord tolerance is 0.1 mm. `dxf_to_pattern_geometry` projects supported panel
+contours and annotations to `garment-assembly/v1` and returns `(document,
+report)`. Generic geometry that cannot be represented in assembly remains in
+the inventory and loss report. Block structure and text semantics are lost.
+
+The inspection path rejects files over 10 MiB, more than 100,000 source
+entities, 200,000 expanded entities, or 500,000 flattened vertices, as well as
+invalid DXF, nonplanar or nonfinite coordinates, invalid closed contours, and
+ambiguous units. These are resource and input checks, not a claim of CAD
+compatibility or physical measurement accuracy. `dxf_to_assembly` remains the
+legacy v0 API; its contour behavior is retained for existing callers. The v1
+projection uses the inspection checks before converting. Export via
+`pattern_geometry_dxf_bytes` is geometry only and returns an explicit loss
+report. Synthetic round trips do not establish AAMA/ASTM interoperability.

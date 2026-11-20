@@ -84,17 +84,40 @@ def test_arc_bulge_spline_line_and_point_roundtrip():
     assert ideal.hausdorff_distance(LineString(arc)) < .5
 
 
-def test_nonplanar_and_recursive_blocks_reported():
+def test_nonplanar_and_recursive_blocks_rejected():
     doc = ezdxf.new()
     doc.units = 4
     doc.modelspace().add_line((0, 0, 1), (10, 0, 1))
+    with pytest.raises(ValueError, match='nonfinite or nonplanar'):
+        read_dxf_geometry(raw(doc))
+    doc = ezdxf.new()
+    doc.units = 4
     block = doc.blocks.new('RECURSIVE')
     block.add_blockref('RECURSIVE', (0, 0))
     doc.modelspace().add_blockref('RECURSIVE', (0, 0))
-    result = read_dxf_geometry(raw(doc))
-    assert not result['entities']
-    assert any('nonplanar' in x['reason'] for x in result['report']['losses'])
-    assert any('recursive' in x['reason'] for x in result['report']['losses'])
+    with pytest.raises(ValueError, match='Invalid DXF'):
+        read_dxf_geometry(raw(doc))
+
+
+def test_size_and_complexity_limits(monkeypatch):
+    from easyon_scan import dxf_adapter
+    doc = ezdxf.new()
+    doc.units = 4
+    doc.modelspace().add_lwpolyline([(0, 0), (10, 0), (10, 10), (0, 10)], close=True)
+    payload = raw(doc)
+    monkeypatch.setattr(dxf_adapter, 'MAX_BYTES', len(payload) - 1)
+    with pytest.raises(ValueError, match='10 MB limit'):
+        read_dxf_geometry(payload)
+    monkeypatch.setattr(dxf_adapter, 'MAX_BYTES', 10 * 1024 * 1024)
+    monkeypatch.setattr(dxf_adapter, 'MAX_ENTITIES', 0)
+    with pytest.raises(ValueError, match='entity limit'):
+        read_dxf_geometry(payload)
+    monkeypatch.setattr(dxf_adapter, 'MAX_ENTITIES', 100_000)
+    monkeypatch.setattr(dxf_adapter, 'MAX_VERTICES', 2)
+    with pytest.raises(ValueError, match='vertex limit'):
+        read_dxf_geometry(payload)
+    with pytest.raises(ValueError, match='Invalid DXF'):
+        read_dxf_geometry(b'not a dxf')
 
 
 def test_pattern_geometry_explicit_export_roundtrip():

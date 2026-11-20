@@ -75,14 +75,18 @@ def _edges(ring, marks, panel_id, provenance):
     return vertices, edges
 
 
-def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowance_mm=None):
+def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowance_mm=None,
+                    _raw_doc=None):
     """Read a DXF path or bytes; unitless inputs require explicit units.
 
     Curves flatten at 0.1 mm chord tolerance; turns >=30 degrees split edges.
     Offsets are hypotheses only and are rejected if empty or disconnected.
     """
     raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
-    doc = ezdxf.decode_base64(base64.b64encode(raw))
+    from .dxf_adapter import MAX_BYTES
+    if len(raw) > MAX_BYTES:
+        raise ValueError("DXF exceeds 10 MB limit")
+    doc = _raw_doc or ezdxf.decode_base64(base64.b64encode(raw))
     code = int(doc.header.get('$INSUNITS', 0))
     if code == 0:
         assumed = {name: scale for name, scale in UNITS.values()}
