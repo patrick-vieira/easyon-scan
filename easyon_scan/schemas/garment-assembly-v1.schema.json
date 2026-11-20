@@ -994,7 +994,14 @@
           ]
         },
         "molde_geometria": {
-          "$ref": "#/$defs/molde_geometry"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/molde_geometry"
+            },
+            {
+              "$ref": "#/$defs/ak_molde_geometry"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -1252,6 +1259,488 @@
                     },
                     "additionalProperties": false
                   }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "ak_xy": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "ak_open_ring": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ak_xy"
+      },
+      "minItems": 3
+    },
+    "ak_molde_geometry": {
+      "type": "object",
+      "required": [
+        "unidade",
+        "origem",
+        "margem_conhecida",
+        "dados"
+      ],
+      "properties": {
+        "unidade": {
+          "const": "mm"
+        },
+        "origem": {
+          "const": "scan"
+        },
+        "margem_conhecida": {
+          "type": "boolean",
+          "const": false
+        },
+        "dados": {
+          "type": "object",
+          "required": [
+            "versao_formato",
+            "grade",
+            "pontos",
+            "arestas",
+            "piques",
+            "fio",
+            "dobra",
+            "margem",
+            "linhas_internas",
+            "furos",
+            "quantidade",
+            "regras_graduacao",
+            "incrementos",
+            "tamanhos",
+            "linha_costura",
+            "scan"
+          ],
+          "properties": {
+            "versao_formato": {
+              "type": "integer",
+              "const": 1
+            },
+            "grade": {
+              "type": "object",
+              "required": [
+                "ordem",
+                "base"
+              ],
+              "properties": {
+                "ordem": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 1
+                },
+                "base": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "pontos": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "x",
+                  "y",
+                  "tipo"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "tipo": {
+                    "enum": [
+                      "canto",
+                      "pique"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 3,
+              "maxItems": 20000
+            },
+            "arestas": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "de",
+                  "para",
+                  "curva",
+                  "tipo",
+                  "nome",
+                  "par"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "de": {
+                    "type": "string"
+                  },
+                  "para": {
+                    "type": "string"
+                  },
+                  "curva": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "pontos"
+                        ],
+                        "properties": {
+                          "pontos": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/ak_xy"
+                            },
+                            "minItems": 1
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tipo": {
+                    "enum": [
+                      "costura",
+                      "bainha",
+                      "dobra",
+                      "decote",
+                      "cava",
+                      "cós",
+                      "livre"
+                    ]
+                  },
+                  "nome": {
+                    "type": "string"
+                  },
+                  "par": {
+                    "type": "null"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 3
+            },
+            "piques": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "aresta",
+                  "posicao_mm",
+                  "tipo",
+                  "tipo_origem"
+                ],
+                "properties": {
+                  "aresta": {
+                    "type": "string"
+                  },
+                  "posicao_mm": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "tipo": {
+                    "enum": [
+                      "V",
+                      "T",
+                      "U"
+                    ]
+                  },
+                  "tipo_origem": {
+                    "enum": [
+                      "notch",
+                      "v_slit",
+                      "check",
+                      "t",
+                      "castle",
+                      "u"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "fio": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "de",
+                    "para"
+                  ],
+                  "properties": {
+                    "de": {
+                      "$ref": "#/$defs/ak_xy"
+                    },
+                    "para": {
+                      "$ref": "#/$defs/ak_xy"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dobra": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "aresta"
+                  ],
+                  "properties": {
+                    "aresta": {
+                      "type": "null"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "margem": {
+              "type": "object",
+              "required": [
+                "padrao_mm",
+                "por_aresta"
+              ],
+              "properties": {
+                "padrao_mm": {
+                  "type": "null"
+                },
+                "por_aresta": {
+                  "type": "object",
+                  "required": [],
+                  "properties": {},
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "linhas_internas": {
+              "type": "array",
+              "items": {},
+              "maxItems": 0
+            },
+            "furos": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ak_open_ring"
+              }
+            },
+            "quantidade": {
+              "type": "object",
+              "required": [
+                "par",
+                "espelhar"
+              ],
+              "properties": {
+                "par": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "espelhar": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "texto": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "regras_graduacao": {
+              "type": "object",
+              "required": [],
+              "properties": {},
+              "additionalProperties": false
+            },
+            "incrementos": {
+              "type": "object",
+              "required": [],
+              "properties": {},
+              "additionalProperties": false
+            },
+            "tamanhos": {
+              "type": "object",
+              "required": [],
+              "properties": {},
+              "additionalProperties": false
+            },
+            "linha_costura": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "pontos",
+                    "estado"
+                  ],
+                  "properties": {
+                    "pontos": {
+                      "$ref": "#/$defs/ak_open_ring"
+                    },
+                    "estado": {
+                      "enum": [
+                        "from_dxf",
+                        "hypothesis_offset"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scan": {
+              "type": "object",
+              "required": [
+                "painel_id",
+                "nome",
+                "papel",
+                "estado_linha_costura",
+                "proveniencia",
+                "proveniencia_arestas",
+                "rotulos",
+                "intervalos_costura_mm",
+                "fonte"
+              ],
+              "properties": {
+                "painel_id": {
+                  "type": "string"
+                },
+                "nome": {
+                  "type": "string"
+                },
+                "papel": {
+                  "enum": [
+                    "shell",
+                    "lining",
+                    "interfacing",
+                    "unknown"
+                  ]
+                },
+                "estado_linha_costura": {
+                  "enum": [
+                    "from_dxf",
+                    "hypothesis_offset",
+                    "missing"
+                  ]
+                },
+                "proveniencia": {
+                  "$ref": "#/$defs/provenance"
+                },
+                "proveniencia_arestas": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "$ref": "#/$defs/provenance"
+                  }
+                },
+                "rotulos": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "intervalos_costura_mm": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ak_xy"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "fonte": {
+                  "type": "object",
+                  "required": [
+                    "file_sha256",
+                    "units",
+                    "insunits_code",
+                    "size"
+                  ],
+                  "properties": {
+                    "file_sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "units": {
+                      "type": "string"
+                    },
+                    "insunits_code": {
+                      "type": "integer"
+                    },
+                    "size": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "assumed_units": {
+                      "enum": [
+                        "mm",
+                        "cm",
+                        "in",
+                        "ft",
+                        "m"
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false

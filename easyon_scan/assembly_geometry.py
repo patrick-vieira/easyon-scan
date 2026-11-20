@@ -7,6 +7,9 @@ import math
 
 from shapely.geometry import LinearRing, Polygon
 
+_AK_EDGE_TYPES = {"costura", "bainha", "dobra", "decote", "cava", "cós", "livre"}
+_AK_NOTCH_TYPES = {"notch": "V", "v_slit": "V", "check": "V", "t": "T", "castle": "T", "u": "U"}
+
 
 def add_pattern_geometry(doc, *, length_tolerance_mm=1.0):
     """Copy v1 into an ID-linked representation without guessing construction.
@@ -112,15 +115,23 @@ def _validate_geometry(doc):
     represented = set()
     for panel in doc['pattern_geometry']['panels']:
         pid = panel['panel_id']
-        if 'molde_geometria' in panel and panel['molde_geometria'] != to_molde_geometria(panel):
-            issue('geometry_molde_projection', 'Provisional profile must match its geometry panel', pid, pid)
-        if pid not in originals or pid in represented:
+        original = originals.get(pid)
+        if original is None or pid in represented:
             issue('geometry_panel_reference', 'Unknown or repeated panel', pid, pid)
         represented.add(pid)
+        molde = panel.get('molde_geometria')
+        if molde is not None and original is not None:
+            try:
+                expected = (to_molde_geometria(panel) if 'perfil' in molde else
+                            _project_ak_panel(doc['source'], original))
+            except ValueError:
+                expected = None
+            if molde != expected:
+                issue('geometry_molde_projection', 'MoldeGeometria must match its source panel', pid, pid)
         points = {p['id']: p for p in panel['points']}
         edges = {e['id']: e for e in panel['edges']}
         hole_edges = {eid for c in panel['contours'] if c['kind'] == 'hole' for eid in c['edge_ids']}
-        source_edges = {e['id'] for e in originals.get(pid, {}).get('edges', [])}
+        source_edges = {e['id'] for e in original['edges']} if original is not None else set()
         for collection in ('points', 'edges', 'contours', 'notches'):
             for value in panel[collection]:
                 register(value['id'], pid)
@@ -262,13 +273,89 @@ def from_molde_geometria(molde):
         raise ValueError('Invalid provisional MoldeGeometria') from exc
 
 
-def add_molde_geometry(doc, *, length_tolerance_mm=1.0):
-    """Copy v1 and attach one provisional Portuguese projection per panel.
+def _project_ak_panel(source, panel):
+    # DEV-2063 attaches intermediate vertices to their original v1 edge.
+    ring, edges = panel['cutline'], panel['edges']
+    if not 3 <= len(edges) <= 20_000:
+        raise ValueError(f"Unsupported AK contour for panel {panel['id']}")
+    edge_ids = {edge['id'] for edge in edges}
+    point_ids = []
+    for i in range(1, len(edges) + 1):
+        point_id = f'P{i}'
+        while point_id in edge_ids:
+            point_id += '_'
+        point_ids.append(point_id)
+    points, ak_edges, notches = [], [], []
+    cursor = 0
+    for i, edge in enumerate(edges):
+        eid, start, end = edge['id'], edge['start_vertex'], edge['end_vertex']
+        if start != cursor or not start < end < len(ring):
+            raise ValueError(f"Nonconsecutive AK edge {eid}")
+        cursor = end
+        x, y = ring[start]
+        points.append(dict(id=point_ids[i], x=x, y=y,
+                           tipo='pique' if any(n['at_mm'] == 0 for n in edge['notches']) else 'canto'))
+        label = edge['semantic_label']
+        intermediate = ring[start + 1:end]
+        ak_edges.append(dict(id=eid, de=point_ids[i], para=point_ids[(i + 1) % len(edges)],
+                             curva=dict(pontos=intermediate) if intermediate else None,
+                             tipo=label if label in _AK_EDGE_TYPES else 'livre', nome=label or '', par=None))
+        length = sum(math.dist(a, b) for a, b in zip(ring[start:end], ring[start + 1:end + 1]))
+        for notch in edge['notches']:
+            if notch['at_mm'] > length + 1e-6:
+                raise ValueError(f"Notch exceeds AK edge {eid}")
+            notches.append(dict(aresta=eid, posicao_mm=notch['at_mm'],
+                                tipo=_AK_NOTCH_TYPES[notch['kind']], tipo_origem=notch['kind']))
+    if cursor != len(ring) - 1:
+        raise ValueError(f"Incomplete AK contour for panel {panel['id']}")
 
-    Existing pattern geometry is preserved; existing Portuguese projections
-    are rejected. Coordinates use the existing mm, y-up planar convention.
+    grain = None
+    if panel['grain'] is not None:
+        center = Polygon(ring).centroid
+        gx, gy = panel['grain']
+        scale = max(abs(gx), abs(gy))
+        if scale == 0:
+            raise ValueError(f"Undefined grain direction in panel {panel['id']}")
+        gx, gy = gx / scale, gy / scale
+        magnitude = math.hypot(gx, gy)
+        gx, gy = gx / magnitude, gy / magnitude
+        grain = dict(de=[center.x - 50 * gx, center.y - 50 * gy],
+                     para=[center.x + 50 * gx, center.y + 50 * gy])
+    quantity = dict(par=False, espelhar=False)
+    if 'quantity' in panel:
+        quantity['texto'] = panel['quantity']
+    size = source.get('size') or None
+    sewline = panel['sewline']
+    scan = dict(
+        painel_id=panel['id'], nome=panel['name'], papel=panel['role'],
+        estado_linha_costura=panel['sewline_status'], proveniencia=panel['provenance'],
+        proveniencia_arestas={e['id']: e['provenance'] for e in edges},
+        rotulos={e['id']: e['semantic_label'] for e in edges},
+        intervalos_costura_mm={e['id']: e['sewline_interval_mm'] for e in edges},
+        fonte=source,
+    )
+    dados = dict(
+        versao_formato=1, grade=dict(ordem=[size] if size else [], base=size),
+        pontos=points, arestas=ak_edges, piques=notches, fio=grain,
+        dobra=dict(aresta=None) if panel['on_fold'] else None,
+        margem=dict(padrao_mm=None, por_aresta={}), linhas_internas=[],
+        furos=[hole[:-1] for hole in panel['holes']], quantidade=quantity,
+        regras_graduacao={}, incrementos={}, tamanhos={},
+        linha_costura=dict(pontos=sewline[:-1], estado=panel['sewline_status']) if sewline else None,
+        scan=scan,
+    )
+    return copy.deepcopy(dict(unidade='mm', origem='scan', margem_conhecida=False, dados=dados))
+
+
+def add_molde_geometry(doc, *, length_tolerance_mm=1.0, profile='ak'):
+    """Copy v1 and attach one AK DEV-2063 projection per source panel.
+
+    Select profile='provisional' to write the legacy Scan-local format.
+    Existing pattern geometry is preserved and existing projections are rejected.
     """
     from .assembly_v1 import validate_assembly_v1
+    if profile not in ('ak', 'provisional'):
+        raise ValueError(f'Unknown MoldeGeometria profile: {profile!r}')
     if doc.get('schema') != 'garment-assembly/v1':
         raise ValueError('Expected garment-assembly/v1; migrate_v0 explicitly')
     result = (copy.deepcopy(doc) if 'pattern_geometry' in doc else
@@ -278,13 +365,17 @@ def add_molde_geometry(doc, *, length_tolerance_mm=1.0):
             raise ValueError('Existing molde_geometria would be overwritten; remove_molde_geometry explicitly before regenerating')
     if any(i['level'] == 'error' for i in validate_assembly_v1(result, length_tolerance_mm=length_tolerance_mm)):
         raise ValueError('Invalid garment-assembly/v1')
+    originals = {p['id']: p for p in result['panels']}
     for panel in result['pattern_geometry']['panels']:
-        panel['molde_geometria'] = to_molde_geometria(panel)
+        panel['molde_geometria'] = (
+            _project_ak_panel(result['source'], originals[panel['panel_id']]) if profile == 'ak'
+            else to_molde_geometria(panel)
+        )
     return result
 
 
 def remove_molde_geometry(doc):
-    """Copy v1 and drop only the provisional Portuguese projections."""
+    """Copy v1 and drop only the MoldeGeometria projections."""
     if doc.get('schema') != 'garment-assembly/v1':
         raise ValueError('Expected garment-assembly/v1')
     result = copy.deepcopy(doc)
