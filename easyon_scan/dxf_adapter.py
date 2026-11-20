@@ -26,7 +26,7 @@ SUPPORTED = {"LINE", "POINT", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE", "ELLIPS
 
 
 def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
-                      _raw_doc=None):
+                      _raw_doc=None, _validate_closed=True):
     """Return metric geometry and inventory; refuse ambiguous/contradictory units.
 
     Only finite geometry in the XY plane is accepted. Nested INSERTs are
@@ -37,9 +37,21 @@ def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
         raise ValueError("tolerance_mm must be finite and positive")
     raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
     if len(raw) > MAX_BYTES:
-        raise ValueError("DXF exceeds 10 MB limit")
+        raise ValueError("DXF exceeds 10 MiB limit")
     try:
         doc = _raw_doc or ezdxf.decode_base64(base64.b64encode(raw))
+        # Layout block records include modelspace; count it only once.
+        source_count = sum(1 for _ in doc.modelspace())
+        for block in doc.blocks:
+            if not block.block_record.is_any_layout:
+                source_count += sum(1 for _ in block)
+            if source_count > MAX_ENTITIES:
+                break
+    except Exception as exc:
+        raise ValueError("Invalid DXF") from exc
+    if source_count > MAX_ENTITIES:
+        raise ValueError("DXF entity limit exceeded")
+    try:
         audit = doc.audit()
     except Exception as exc:
         raise ValueError("Invalid DXF") from exc
@@ -61,12 +73,10 @@ def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
                              scale_to_mm=factor, output="mm"),
                   tolerance_mm=tolerance_mm, layers={}, blocks={}, curves={}, losses=[],
                   source=dict(file_sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw)),
-                  exporter=doc.header.get("$LASTSAVEDBY") or None)
+                  exporter=None)
     entities = []
     layers, blocks, curves = {}, Counter(), Counter()
     counts = dict(expanded=0, vertices=0)
-    if sum(1 for layout in [doc.modelspace(), *doc.blocks] for _ in layout) > MAX_ENTITIES:
-        raise ValueError("DXF entity limit exceeded")
 
     def loss(kind, reason, layer=None):
         report["losses"].append(dict(entity_type=kind, layer=layer, reason=reason))
@@ -83,7 +93,12 @@ def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
                 name = entity.dxf.name
                 if name in stack or len(stack) >= 32:
                     raise ValueError("Invalid DXF: recursive or excessively nested block")
+                if entity.mcount > MAX_EXPANDED_ENTITIES - counts["expanded"]:
+                    raise ValueError("DXF block expansion limit exceeded")
                 for insert in entity.multi_insert() if entity.mcount > 1 else [entity]:
+                    counts["expanded"] += 1
+                    if counts["expanded"] > MAX_EXPANDED_ENTITIES:
+                        raise ValueError("DXF block expansion limit exceeded")
                     blocks[name] += 1
                     loss(kind, "block structure expanded", layer)
                     if insert.attribs:
@@ -126,7 +141,7 @@ def read_dxf_geometry(path_or_bytes, *, assume_units=None, tolerance_mm=0.1,
             points = [[v.x * factor, v.y * factor] for v in vertices]
             if closed and len(points) > 1 and points[0] == points[-1]:
                 points.pop()
-            if closed and (len(points) < 3 or not Polygon(points).is_valid):
+            if _validate_closed and closed and (len(points) < 3 or not Polygon(points).is_valid):
                 raise ValueError("Invalid DXF: invalid closed geometry")
             entities.append(dict(source_type=kind, layer=layer, closed=closed, points_mm=points))
     collect(doc.modelspace())
@@ -205,7 +220,12 @@ def dxf_to_pattern_geometry(path_or_bytes, *, assume_units=None, length_toleranc
     from .assembly_v1 import migrate_v0
     from .assembly_geometry import add_pattern_geometry
     raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
-    source = ezdxf.decode_base64(base64.b64encode(raw))
+    if len(raw) > MAX_BYTES:
+        raise ValueError("DXF exceeds 10 MiB limit")
+    try:
+        source = ezdxf.decode_base64(base64.b64encode(raw))
+    except Exception as exc:
+        raise ValueError("Invalid DXF") from exc
     geometry = read_dxf_geometry(raw, assume_units=assume_units, _raw_doc=source)
     def check(space, nested=False):
         labels = {}
@@ -228,7 +248,7 @@ def dxf_to_pattern_geometry(path_or_bytes, *, assume_units=None, length_toleranc
     assembly = dxf_to_assembly(raw, assume_units=assume_units, _raw_doc=source)
     result = add_pattern_geometry(migrate_v0(assembly), length_tolerance_mm=length_tolerance_mm)
     report = geometry['report']
-    report['source'] = dict(result['source'])
+    report['source'].update(result['source'])
     report['provenance'] = 'Original DXF SHA, units, assumptions and entity handles retained'
     report['losses'].append(dict(entity_type='ASSEMBLY_PROJECTION', layer=None,
                                 reason='Only supported assembly panel contours, holes and marks are represented; generic inventory is separate'))

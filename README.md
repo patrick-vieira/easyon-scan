@@ -687,7 +687,7 @@ assemblies, and never treats DXF layout proximity as assembly evidence.
 
 `easyon_scan.dxf_adapter.read_dxf_geometry(path_or_bytes, assume_units=None,
  tolerance_mm=0.1)` returns metric `dxf-geometry/v1` entities and a report of
-units and scale, optional declared exporter, layer/entity inventory, expanded
+units and scale, exporter (`null` because no verified application field is read), layer/entity inventory, expanded
 blocks, flattened curves, explicit losses, and source SHA-256/byte count. The
 bytes are processed in memory; this API does not store the original. Unitless
 DXF needs `assume_units`; a contradictory assumption is rejected. The default
@@ -701,7 +701,8 @@ entities, 200,000 expanded entities, or 500,000 flattened vertices, as well as
 invalid DXF, nonplanar or nonfinite coordinates, invalid closed contours, and
 ambiguous units. These are resource and input checks, not a claim of CAD
 compatibility or physical measurement accuracy. `dxf_to_assembly` remains the
-legacy v0 API; its contour behavior is retained for existing callers. The v1
-projection uses the inspection checks before converting. Export via
+legacy v0 API; it uses the same byte, entity, expansion and vertex limits before
+converting, while retaining its contour validation behavior. The v1 projection
+also rejects invalid closed contours. Export via
 `pattern_geometry_dxf_bytes` is geometry only and returns an explicit loss
 report. Synthetic round trips do not establish AAMA/ASTM interoperability.

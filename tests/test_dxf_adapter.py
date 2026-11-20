@@ -106,7 +106,7 @@ def test_size_and_complexity_limits(monkeypatch):
     doc.modelspace().add_lwpolyline([(0, 0), (10, 0), (10, 10), (0, 10)], close=True)
     payload = raw(doc)
     monkeypatch.setattr(dxf_adapter, 'MAX_BYTES', len(payload) - 1)
-    with pytest.raises(ValueError, match='10 MB limit'):
+    with pytest.raises(ValueError, match='10 MiB limit'):
         read_dxf_geometry(payload)
     monkeypatch.setattr(dxf_adapter, 'MAX_BYTES', 10 * 1024 * 1024)
     monkeypatch.setattr(dxf_adapter, 'MAX_ENTITIES', 0)
@@ -192,7 +192,9 @@ def test_v1_fold_and_original_source_are_retained():
     assert result['source']['assumed_units'] == 'mm'
     assert result['source']['insunits_code'] == 0
     assert result['panels'][0]['provenance']['handle'] == block[0].dxf.handle
-    assert report['source'] == result['source']
+    assert report['source']['bytes'] == len(payload)
+    assert report['source']['file_sha256'] == result['source']['file_sha256']
+    assert all(report['source'][key] == value for key, value in result['source'].items())
 
 
 @pytest.mark.parametrize('panel_id', ['7', '14', 'INTERNAL', 'a/b'])
@@ -219,3 +221,57 @@ def test_v1_length_tolerance_is_explicit_and_validated():
     piece_block(doc, 'ONE', 'M')
     with pytest.raises(ValueError, match='length_tolerance_mm'):
         dxf_to_pattern_geometry(raw(doc), length_tolerance_mm=-1)
+
+
+def test_empty_minsert_respects_expansion_budget(monkeypatch):
+    from easyon_scan import dxf_adapter
+    doc = ezdxf.new()
+    doc.units = 4
+    doc.blocks.new('EMPTY')
+    doc.modelspace().add_blockref('EMPTY', (0, 0), dxfattribs={
+        'row_count': 1000, 'column_count': 1000, 'row_spacing': 1, 'column_spacing': 1,
+    })
+    monkeypatch.setattr(dxf_adapter, 'MAX_EXPANDED_ENTITIES', 10)
+    with pytest.raises(ValueError, match='block expansion limit'):
+        read_dxf_geometry(raw(doc))
+
+
+def test_v1_and_legacy_reject_oversize_before_decode(monkeypatch):
+    from easyon_scan import dxf_adapter
+    from easyon_scan.assembly import dxf_to_assembly
+    monkeypatch.setattr(dxf_adapter, 'MAX_BYTES', 3)
+    for importer in (dxf_to_pattern_geometry, dxf_to_assembly):
+        with pytest.raises(ValueError, match='10 MiB limit'):
+            importer(b'not a dxf')
+    monkeypatch.setattr(dxf_adapter, 'MAX_BYTES', 10 * 1024 * 1024)
+    with pytest.raises(ValueError, match='Invalid DXF'):
+        dxf_to_pattern_geometry(b'not a dxf')
+
+
+def test_legacy_rejects_expansion_and_invalid_closed_geometry(monkeypatch):
+    from easyon_scan import dxf_adapter
+    from easyon_scan.assembly import dxf_to_assembly
+    doc = ezdxf.new()
+    doc.units = 4
+    block = doc.blocks.new('EMPTY')
+    doc.modelspace().add_blockref(block.name, (0, 0), dxfattribs={
+        'row_count': 100, 'column_count': 100, 'row_spacing': 1, 'column_spacing': 1,
+    })
+    monkeypatch.setattr(dxf_adapter, 'MAX_EXPANDED_ENTITIES', 10)
+    with pytest.raises(ValueError, match='block expansion limit'):
+        dxf_to_assembly(raw(doc))
+    doc = ezdxf.new()
+    doc.units = 4
+    doc.modelspace().add_lwpolyline([(0, 0), (10, 10), (0, 10), (10, 0)], close=True)
+    with pytest.raises(ValueError, match='invalid closed geometry'):
+        dxf_to_pattern_geometry(raw(doc))
+
+
+def test_last_saved_by_is_not_exposed_as_exporter():
+    doc = ezdxf.new()
+    doc.units = 4
+    doc.header['$LASTSAVEDBY'] = 'a private user name'
+    doc.modelspace().add_lwpolyline([(0, 0), (10, 0), (10, 10), (0, 10)], close=True)
+    report = read_dxf_geometry(raw(doc))['report']
+    assert report['exporter'] is None
+    assert 'a private user name' not in str(report)

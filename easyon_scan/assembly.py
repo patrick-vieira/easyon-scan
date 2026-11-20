@@ -83,10 +83,19 @@ def dxf_to_assembly(path_or_bytes, *, size=None, assume_units=None, seam_allowan
     Offsets are hypotheses only and are rejected if empty or disconnected.
     """
     raw = path_or_bytes if isinstance(path_or_bytes, bytes) else Path(path_or_bytes).read_bytes()
-    from .dxf_adapter import MAX_BYTES
-    if len(raw) > MAX_BYTES:
-        raise ValueError("DXF exceeds 10 MB limit")
-    doc = _raw_doc or ezdxf.decode_base64(base64.b64encode(raw))
+    from .dxf_adapter import read_dxf_geometry
+    # Apply the same bounded expansion and geometry checks as inspection.
+    try:
+        read_dxf_geometry(raw, assume_units=assume_units, _raw_doc=_raw_doc,
+                          _validate_closed=False)
+    except ValueError as exc:
+        if str(exc).startswith("Ambiguous DXF units"):
+            raise ValueError("Unitless DXF ($INSUNITS=0): specify assume_units (mm, cm or in)") from exc
+        raise
+    try:
+        doc = _raw_doc or ezdxf.decode_base64(base64.b64encode(raw))
+    except Exception as exc:
+        raise ValueError("Invalid DXF") from exc
     code = int(doc.header.get('$INSUNITS', 0))
     if code == 0:
         assumed = {name: scale for name, scale in UNITS.values()}
