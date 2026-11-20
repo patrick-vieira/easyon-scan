@@ -112,6 +112,8 @@ def _validate_geometry(doc):
     represented = set()
     for panel in doc['pattern_geometry']['panels']:
         pid = panel['panel_id']
+        if 'molde_geometria' in panel and panel['molde_geometria'] != to_molde_geometria(panel):
+            issue('geometry_molde_projection', 'Provisional profile must match its geometry panel', pid, pid)
         if pid not in originals or pid in represented:
             issue('geometry_panel_reference', 'Unknown or repeated panel', pid, pid)
         represented.add(pid)
@@ -192,3 +194,100 @@ def _validate_geometry(doc):
     if represented != set(originals):
         issue('geometry_panel_reference', 'Extension must represent every panel', None, None)
     return issues
+
+
+def to_molde_geometria(panel):
+    """Copy a geometry panel to the provisional Portuguese Scan profile.
+
+    This is a local projection, not an implementation of the AK wire format.
+    Unknown AK structures are null. Scan-only links live in dados.scan.
+    """
+    item = copy.deepcopy(panel)
+    item.pop('molde_geometria', None)
+    return dict(
+        perfil='scan-molde/v1-provisional', panel_id=item['panel_id'],
+        grade=None,
+        pontos=[{k: v for k, v in p.items() if k != 'grading'} for p in item['points']],
+        arestas=[{k: v for k, v in e.items() if k not in ('source_edge_id', 'allowance_mm')}
+                 for e in item['edges']],
+        contornos=item['contours'], piques=item['notches'], fio=item['grain'],
+        dobra=item['fold_edge_ids'],
+        margem=[dict(edge_id=e['id'], allowance_mm=e['allowance_mm']) for e in item['edges']],
+        linhas_internas=None,
+        furos=[c['id'] for c in item['contours'] if c['kind'] == 'hole'],
+        quantidade=None,
+        regras_graduacao=[dict(point_id=p['id'], grading=p['grading']) for p in item['points']],
+        incrementos=None, tamanhos=None,
+        dados=dict(scan=dict(source_edges=[dict(edge_id=e['id'], source_edge_id=e['source_edge_id'])
+                                           for e in item['edges']])))
+
+
+def from_molde_geometria(molde):
+    """Invert a canonical provisional profile without changing the input.
+
+    Only profiles produced by to_molde_geometria (including subsequent edits
+    representable in that profile) are supported. Unknown external fields must
+    not be silently discarded. Assembly review/provenance are never rebuilt.
+    """
+    import json
+    from importlib.resources import files
+    from .assembly_v1 import _structure_issues
+    schema = json.loads(files('easyon_scan').joinpath('schemas/garment-assembly-v1.schema.json').read_text())
+    issues = _structure_issues(molde, schema['$defs']['molde_geometry'], schema)
+    if issues:
+        raise ValueError('Invalid provisional MoldeGeometria structure: ' + issues[0]['message'])
+    try:
+        item = copy.deepcopy(molde)
+        grading = {r['point_id']: r['grading'] for r in item['regras_graduacao']}
+        margins = {r['edge_id']: r['allowance_mm'] for r in item['margem']}
+        sources = {r['edge_id']: r['source_edge_id'] for r in item['dados']['scan']['source_edges']}
+        panel = dict(panel_id=item['panel_id'],
+                     points=[dict(p, grading=grading[p['id']]) for p in item['pontos']],
+                     edges=[dict(e, allowance_mm=margins[e['id']], source_edge_id=sources[e['id']])
+                            for e in item['arestas']],
+                     contours=item['contornos'], notches=item['piques'], grain=item['fio'],
+                     fold_edge_ids=item['dobra'])
+        if to_molde_geometria(panel) != item:
+            raise ValueError('Noncanonical or unsupported provisional MoldeGeometria')
+        # A standalone geometry panel cannot resolve source_edge_id against an
+        # assembly. Check local topology here; assembly validation resolves those
+        # provenance links against the actual common panels separately.
+        original = dict(id=panel['panel_id'], edges=[dict(id=e['source_edge_id'])
+                        for e in panel['edges'] if e['source_edge_id'] is not None])
+        issues = _validate_geometry(dict(panels=[original], pattern_geometry=dict(panels=[panel])))
+        if issues:
+            raise ValueError('Invalid provisional MoldeGeometria: ' + issues[0]['code'])
+        return copy.deepcopy(panel)
+    except (KeyError, TypeError) as exc:
+        raise ValueError('Invalid provisional MoldeGeometria') from exc
+
+
+def add_molde_geometry(doc, *, length_tolerance_mm=1.0):
+    """Copy v1 and attach one provisional Portuguese projection per panel.
+
+    Existing pattern geometry is preserved; existing Portuguese projections
+    are rejected. Coordinates use the existing mm, y-up planar convention.
+    """
+    from .assembly_v1 import validate_assembly_v1
+    if doc.get('schema') != 'garment-assembly/v1':
+        raise ValueError('Expected garment-assembly/v1; migrate_v0 explicitly')
+    result = (copy.deepcopy(doc) if 'pattern_geometry' in doc else
+              add_pattern_geometry(doc, length_tolerance_mm=length_tolerance_mm))
+    for panel in result['pattern_geometry']['panels']:
+        if 'molde_geometria' in panel:
+            raise ValueError('Existing molde_geometria would be overwritten; remove_molde_geometry explicitly before regenerating')
+    if any(i['level'] == 'error' for i in validate_assembly_v1(result, length_tolerance_mm=length_tolerance_mm)):
+        raise ValueError('Invalid garment-assembly/v1')
+    for panel in result['pattern_geometry']['panels']:
+        panel['molde_geometria'] = to_molde_geometria(panel)
+    return result
+
+
+def remove_molde_geometry(doc):
+    """Copy v1 and drop only the provisional Portuguese projections."""
+    if doc.get('schema') != 'garment-assembly/v1':
+        raise ValueError('Expected garment-assembly/v1')
+    result = copy.deepcopy(doc)
+    for panel in result.get('pattern_geometry', {}).get('panels', []):
+        panel.pop('molde_geometria', None)
+    return result

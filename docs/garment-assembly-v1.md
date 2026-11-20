@@ -71,3 +71,72 @@ avoiding duplicate closure/corner vertices from floating arithmetic. Extension
 pique offsets clamp against the segment's direct Euclidean length, the same
 quantity used by validation. A seeded regression covers 200 synthetic noninteger
 quadrilaterals with corner piques and final-edge endpoint piques.
+
+### Provisional Portuguese projection (SCAN-33)
+
+`pattern_geometry/v1` optionally carries one `molde_geometria` per geometry
+panel. Its `perfil: scan-molde/v1-provisional` identifies a **local experimental
+projection**, not the AK DEV-2063 wire format. The available textual agreement
+names fields but does not specify their nested shapes, cardinalities or enums.
+This profile therefore does not establish interoperability with AK or Audaces.
+Existing documents, `panel`, provenance and review snapshots remain unchanged.
+
+The public pure functions in `easyon_scan.assembly_geometry` are:
+
+```python
+projected = add_molde_geometry(v1, length_tolerance_mm=1.0)
+geometry_only = remove_molde_geometry(projected)
+molde = to_molde_geometria(geometry_panel)
+geometry_panel_copy = from_molde_geometria(molde)
+```
+
+`add_molde_geometry` adds point geometry if absent, validates v1 first and rejects
+an existing projection. `remove_molde_geometry` removes only projections, keeping
+point geometry; use `remove_pattern_geometry` to recover the common assembly v1.
+v0 requires the explicit `migrate_v0` path. Every converter copies its input.
+
+Coordinates and deltas are millimetres in the existing Cartesian y-up convention;
+no image-coordinate transform is inferred. One profile represents one panel.
+`pontos`, `arestas`, `contornos`, `piques`, `fio` and `dobra` reuse the documented
+internal geometry shapes (nested keys remain English). Edges in `arestas` omit
+Scan source links and allowances: `margem` contains ordered `{edge_id,
+allowance_mm}` records; `regras_graduacao` contains ordered `{point_id, grading}`
+records. `furos` lists the hole contour IDs. Only Scan source links appear in
+`dados.scan.source_edges` as `{edge_id, source_edge_id}` records. Their shape is
+local and provisional. No additional panel, provenance or review snapshot is
+copied into the projection.
+
+`grade`, `linhas_internas`, `quantidade`, `incrementos` and `tamanhos` are required
+null placeholders until the full AK definitions are available. Null means
+unknown, including quantity; it does not imply one cut or no internal lines.
+Stored per-point grading rules remain available in `regras_graduacao`; no grade
+application or size ordering is inferred. The exact AK meaning of `grade`,
+curve encoding, internal lines, quantity, increments, sizes and grading rules
+remains to be confirmed before external import/export is implemented.
+
+A projection must equal the canonical conversion of its accompanying geometry
+panel. Validation reports `geometry_molde_projection` with panel/entity ID for
+any divergence; edit the geometry and regenerate the projection explicitly.
+`from_molde_geometria` rejects unsupported fields, missing links, duplicate or
+noncanonical records rather than silently discarding them. Its successful round
+trip proves preservation of the local geometry fields only. It does not validate
+an external AK payload or approve manufacturing geometry. Synthetic tests cover
+an assembly fixture with review history, grading deltas, allowance, holes, grain,
+open contours, duplicate IDs, bad references and self-intersections with IDs.
+
+The extension is additive for the updated v1 schema: all previously valid v1
+payloads remain valid. Older strict v1 validators may reject `molde_geometria`
+because geometry panels disallow additional properties; remove this optional
+projection when exchanging with such readers. This is not a negotiated external
+schema upgrade.
+
+The inverse converter explicitly checks the profile against its JSON Schema
+before reconstruction, then validates local geometry topology: unique entity
+IDs, closed contours, valid point/edge/notch/fold references, grading size
+uniqueness, nonzero grain, intersections and hole placement. Ordered auxiliary
+records must match the canonical point/edge collections exactly, rejecting
+extra or duplicate records. Inputs and outputs do not share mutable lists.
+A standalone profile cannot establish whether a Scan `source_edge_id` exists in
+an external assembly: only `validate_assembly_v1` resolves that provenance link
+against the actual common panel. Schema validation and local topology checks
+are distinct from measurement accuracy and manufacturing review.

@@ -258,3 +258,132 @@ def test_noninteger_quadrilaterals_and_corner_notches_are_convertible():
         converted = add_pattern_geometry(base)
         assert len(converted['pattern_geometry']['panels'][0]['notches']) == 2
         assert not errors(converted)
+
+
+def test_provisional_molde_profile_roundtrip_and_purity():
+    from easyon_scan.assembly_geometry import (
+        add_molde_geometry, remove_molde_geometry,
+        to_molde_geometria, from_molde_geometria,
+    )
+    base = add_pattern_geometry(source(hole=True))
+    panel = base['pattern_geometry']['panels'][0]
+    panel['points'][0]['grading'] = [dict(size='L', delta_mm=[2, -3])]
+    panel['edges'][0]['allowance_mm'] = 4.5
+    panel['grain'] = [0., 1.]
+    snapshot = copy.deepcopy(base)
+    result = add_molde_geometry(base)
+    assert base == snapshot
+    assert not errors(result)
+    assert remove_molde_geometry(result) == base
+    assert remove_pattern_geometry(result) == remove_pattern_geometry(base)
+    profile = result['pattern_geometry']['panels'][0]['molde_geometria']
+    profile_snapshot = copy.deepcopy(profile)
+    assert from_molde_geometria(profile) == panel
+    assert to_molde_geometria(from_molde_geometria(profile)) == profile
+    assert profile == profile_snapshot
+    assert profile['fio'] == [0., 1.]
+    assert profile['regras_graduacao'][0]['grading'][0]['delta_mm'] == [2, -3]
+    assert profile['furos']
+    assert all(profile[k] is None for k in (
+        'grade', 'linhas_internas', 'quantidade', 'incrementos', 'tamanhos'))
+    assert all('source_edge_id' not in e for e in profile['arestas'])
+    assert profile['dados']['scan']['source_edges']
+    with pytest.raises(ValueError, match='overwritten'):
+        add_molde_geometry(result)
+    with pytest.raises(ValueError, match='migrate_v0'):
+        add_molde_geometry({'schema': 'garment-assembly/v0'})
+
+
+@pytest.mark.parametrize('mutation,code', [
+    (lambda p: p['edges'][0].update(end_point_id=p['points'][2]['id']), 'geometry_open_contour'),
+    (lambda p: p['points'].append(copy.deepcopy(p['points'][0])), 'geometry_duplicate_id'),
+    (lambda p: p['edges'][0].update(start_point_id='missing'), 'geometry_reference'),
+])
+def test_molde_extension_keeps_geometry_error_ids(mutation, code):
+    from easyon_scan.assembly_geometry import add_molde_geometry
+    doc = add_molde_geometry(source())
+    panel = doc['pattern_geometry']['panels'][0]
+    mutation(panel)
+    issues = [i for i in errors(doc) if i['code'] == code]
+    assert issues
+    assert all(i['panel'] == panel['panel_id'] and i['entity_id'] for i in issues)
+
+
+def test_molde_profile_crossing_and_divergence_are_rejected():
+    from easyon_scan.assembly_geometry import add_molde_geometry, from_molde_geometria
+    doc = add_molde_geometry(source())
+    panel = doc['pattern_geometry']['panels'][0]
+    panel['points'][1]['xy_mm'], panel['points'][2]['xy_mm'] = (
+        panel['points'][2]['xy_mm'], panel['points'][1]['xy_mm'])
+    issues = errors(doc)
+    crossing = next(i for i in issues if i['code'] == 'geometry_self_intersection')
+    assert crossing['entity_id'] == panel['contours'][0]['id']
+    assert 'geometry_molde_projection' in {i['code'] for i in issues}
+    profile = panel['molde_geometria']
+    profile['dados']['other'] = 'unsupported'
+    with pytest.raises(ValueError, match='structure'):
+        from_molde_geometria(profile)
+    assert 'structure' in {i['code'] for i in errors(doc)}
+
+
+def test_molde_profile_generated_review_fixture_preserves_common_v1(tmp_path):
+    import json
+    from easyon_scan.synthetic_garment import generate_fixture
+    from easyon_scan.assembly_geometry import add_molde_geometry
+    generate_fixture(tmp_path, sizes=('M',))
+    base = json.loads((tmp_path / 'M.assembly-v1.json').read_text())
+    snapshot = copy.deepcopy(base)
+    converted = add_molde_geometry(base)
+    assert not errors(converted)
+    assert remove_pattern_geometry(converted) == base == snapshot
+    assert len(converted['pattern_geometry']['panels']) == len(base['panels'])
+    from easyon_scan.assembly_geometry import to_molde_geometria, from_molde_geometria
+    for panel in converted['pattern_geometry']['panels']:
+        expected = copy.deepcopy(panel)
+        profile = expected.pop('molde_geometria')
+        assert from_molde_geometria(profile) == expected
+        assert to_molde_geometria(from_molde_geometria(profile)) == profile
+
+
+@pytest.mark.parametrize('mutation', [
+    lambda m: m['pontos'][0].update(unexpected=True),
+    lambda m: m['arestas'][0].update(unexpected=True),
+    lambda m: m['contornos'][0].update(unexpected=True),
+    lambda m: m['dados']['scan'].update(unexpected=True),
+    lambda m: m['pontos'].append(copy.deepcopy(m['pontos'][0])),
+    lambda m: m['arestas'].append(copy.deepcopy(m['arestas'][0])),
+    lambda m: m['margem'].append(copy.deepcopy(m['margem'][0])),
+    lambda m: m['regras_graduacao'].append(copy.deepcopy(m['regras_graduacao'][0])),
+    lambda m: m['dados']['scan']['source_edges'].append(copy.deepcopy(m['dados']['scan']['source_edges'][0])),
+    lambda m: m['arestas'][0].update(start_point_id='missing'),
+    lambda m: m['contornos'][0]['point_ids'].__setitem__(0, 'missing'),
+    lambda m: m['dobra'].append('missing'),
+    lambda m: m['piques'].append(dict(id='n1', edge_id='missing', at_mm=0, kind='notch')),
+    lambda m: m['pontos'][0].update(xy_mm=['bad', 0]),
+    lambda m: m['pontos'][0].update(xy_mm=[True, 0]),
+    lambda m: m['pontos'][0].update(xy_mm=[float('nan'), 0]),
+    lambda m: m['margem'][0].update(allowance_mm=True),
+    lambda m: m.update(fio=[0, 0]),
+    lambda m: m['regras_graduacao'][0].update(grading=[dict(size='L', delta_mm=[1, 0])] * 2),
+])
+def test_inverse_molde_rejects_malformed_structure_and_topology(mutation):
+    from easyon_scan.assembly_geometry import to_molde_geometria, from_molde_geometria
+    panel = add_pattern_geometry(source())['pattern_geometry']['panels'][0]
+    profile = to_molde_geometria(panel)
+    mutation(profile)
+    with pytest.raises(ValueError):
+        from_molde_geometria(profile)
+
+
+def test_inverse_molde_does_not_alias_input_or_reconstructed_fields():
+    from easyon_scan.assembly_geometry import to_molde_geometria, from_molde_geometria
+    panel = add_pattern_geometry(source(hole=True))['pattern_geometry']['panels'][0]
+    panel['points'][0]['grading'] = [dict(size='L', delta_mm=[2, -3])]
+    profile = to_molde_geometria(panel)
+    snapshot = copy.deepcopy(profile)
+    rebuilt = from_molde_geometria(profile)
+    rebuilt['points'][0]['xy_mm'][0] += 10
+    rebuilt['points'][0]['grading'][0]['delta_mm'][0] += 10
+    rebuilt['contours'][0]['point_ids'].append('another')
+    assert profile == snapshot
+    assert panel['points'][0]['grading'][0]['delta_mm'] == [2, -3]
